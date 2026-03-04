@@ -120,3 +120,11 @@ dist/protocol.schema.json
 
 # Synthing
 **/.stfolder/
+
+# Local Python & WSL development
+venv/
+.venv/
+cloudflared
+cloudflared.log
+.bot.lock
+*.lock.json
