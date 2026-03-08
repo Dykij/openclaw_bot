@@ -134,14 +134,13 @@ Run `openclaw doctor` to surface risky/misconfigured DM policies.
 - **[Companion apps](https://docs.openclaw.ai/platforms/macos)** — macOS menu bar app + iOS/Android [nodes](https://docs.openclaw.ai/nodes).
 - **[Onboarding](https://docs.openclaw.ai/start/wizard) + [skills](https://docs.openclaw.ai/tools/skills)** — wizard-driven setup with bundled/managed/workspace skills.
 
-## 🚀 SACS-2026 Core Upgrades (New)
+## 🚀 SACS-2026 Core Upgrades (Phase 13 & 14)
 
-- **[Anchored Iterative Context Compressor](https://docs.openclaw.ai/gateway/memory)** — Intelligent incremental merging of chat history (replaces naive summarization).
-- **[LLM-based Intent Router](https://docs.openclaw.ai/gateway/routing)** — Advanced task dispatching using Qwen2.5 (replaces keyword matching).
-- **[Pipeline Executor](https://docs.openclaw.ai/concepts/pipeline)** — Support for complex multi-agent chains (Planner → Executor → Auditor).
-- **[Aesthetic Design System](https://docs.openclaw.ai/web/design)** — New premium Glassmorphism UI with dynamic micro-animations.
-- **[Hot-Reload Engine](https://docs.openclaw.ai/gateway/configuration)** — Real-time configuration updates via `watchdog` monitoring.
-- **[Health & Metrics Hub](https://docs.openclaw.ai/gateway/health)** — Integrated Prometheus metrics and `/health` server for HFT monitoring.
+- **[Hardened Auto-Rollback V2]** — Git-based rollback with HMAC-SHA256 signature verification and hooks isolation. Prevents malicious code injection durante automated refactors.
+- **[Red Team Security Patching]** — System immune to TLS Pinning bypass (V1) and Memory Secret Extraction (V4) using OS Keyring integration.
+- **[Aesthetic Design System]** — New premium Glassmorphism UI for Workspace/Skills manager with dynamic micro-animations.
+- **[Phase 14 Sandbox]** — Agentic Sandbox for HFT bots: Pydantic-based `TradeDecision` gate isolating LLMs from direct system write access.
+- **[CUDA Acceleration]** — Native CuPy support for HFT math modules (Markov chains, sliding windows) targeting RTX 5060 Ti.
 
 ## Star History
 
