@@ -711,7 +711,7 @@ class OpenClawGateway:
             f"Pipeline завершён ({brigade})",
             f"Промпт: {prompt}\n\n"
             f"*Pipeline:* {chain_str}\n"
-            f"*Ответ:* {llm_response[:300]}...\n\n"
+            f"*Ответ:* {llm_response}\n\n"
             f"*Бригада:* {brigade} (Ролей: {len(roles)})\n"
             f"*GC Stats:* {self.memory_gc.get_stats()}",
         )
