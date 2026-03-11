@@ -90,6 +90,19 @@ The root `tsconfig.json` is configured for legacy decorators (`experimentalDecor
 with `useDefineForClassFields: false`. Avoid flipping these unless you are also updating the UI
 build tooling to support standard decorators.
 
+## Repository Isolation Rules
+
+OpenClaw follows a "Factory vs Product" architecture.
+1. **Isolation**: Changes to Core (`D:\openclaw_bot\openclaw_bot`) MUST NOT depend on Product-specific logic.
+2. **Product Independence**: Bots (e.g., `D:\Dmarket_bot`) should be developed as independent modules that consume the Core API.
+3. **Data Integrity**: Never store Product API keys or secrets in the Core repository.
+
+## Development Execution
+
+After making changes to TypeScript files (`.ts`) in the `/src` directory:
+- **Restart Daemon**: You MUST run `openclaw daemon restart` to apply changes.
+- **Config**: Use `openclaw config set` for any persistent adjustments.
+
 ## AI/Vibe-Coded PRs Welcome! 🤖
 
 Built with Codex, Claude, or other AI tools? **Awesome - just mark it!**

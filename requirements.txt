@@ -1,3 +1,20 @@
+orjson
+mcp>=0.1.0
+pydantic>=2.0
 aiogram
 aiohttp
 psutil
+structlog
+prometheus_client
+watchdog
+grpcio
+grpcio-tools
+fastapi
+redis
+uvicorn
+
+# GPU acceleration packages require custom build for sm_120 (see install_gpu_deps.ps1 or Dockerfile)
+# torch
+# cupy
+# llama-cpp-python
+# vllm

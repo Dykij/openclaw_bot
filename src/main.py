@@ -7,12 +7,19 @@ import os
 import re
 import subprocess
 import sys
+import time
 from typing import Optional
 
 import structlog
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, ForceReply
+from aiogram.types import (
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from prometheus_client import Counter, Gauge, start_http_server
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -50,7 +57,7 @@ class ConfigReloader(FileSystemEventHandler):
             self.callback()
 
 
-LOCK_FILE = os.path.join(os.path.dirname(__file__), ".bot.lock")
+LOCK_FILE = "/tmp/openclaw_bot.lock"
 
 
 def acquire_lock():
@@ -111,6 +118,7 @@ class OpenClawGateway:
         self.pipeline = PipelineExecutor(self.config, self.ollama_url)
         self.memory_gc = MemoryGarbageCollector(self.ollama_url)
         self._intent_cache: dict = {}  # Simple cache for intent classification
+        self.processed_task_hashes = set()
 
         # Watchdog for Config
         self._observer = Observer()
@@ -144,6 +152,91 @@ class OpenClawGateway:
         
         # Callback query handler for inline buttons
         self.dp.callback_query.register(self.handle_callback_query)
+
+        # Background logic
+        self._bg_tasks = set()
+
+    async def _scheduled_memory_gc(self):
+        """Background task to run Memory GC every 24 hours."""
+        logger.info("Memory GC background loop started (24h interval)")
+        while True:
+            try:
+                # Wait 24 hours (86400 seconds)
+                await asyncio.sleep(86400)
+                logger.info("Triggering scheduled Memory GC compression...")
+                from src.memory_gc import MemoryGarbageCollector
+                gc = MemoryGarbageCollector(self.ollama_url)
+                
+                # Logic: Find stale conversation artifacts and zip/summarize them
+                # We can also append the persistent summary to Cold_Memory.md
+                memory_bank_dir = os.path.join(os.getcwd(), ".memory-bank")
+                cold_memory_path = os.path.join(memory_bank_dir, "Cold_Memory.md")
+                
+                if gc.persistent_summary:
+                    with open(cold_memory_path, "a", encoding="utf-8") as f:
+                        f.write(f"\n\n### Archived Context ({time.strftime('%Y-%m-%d %H:%M:%S')})\n")
+                        f.write(gc.persistent_summary)
+                    logger.info("Persistent summary archived to Cold_Memory.md")
+
+                logger.info("Scheduled Memory GC completed.")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Memory GC loop error", error=str(e))
+                await asyncio.sleep(3600)  # Retry in an hour on error
+
+    async def _poll_remote_tasks(self):
+        """
+        Background task to poll for commands from a remote registry.
+        Enables operation behind NAT/Firewall without open ports (Phase 2.3).
+        """
+        poll_url = self.config["system"].get("polling_gateway_url")
+        if not poll_url:
+            logger.info("Polling Gateway: Disabled (no URL in config)")
+            return
+
+        interval = self.config["system"].get("polling_interval_sec", 30)
+        logger.info("Polling Gateway: Active", url=poll_url, interval=interval)
+
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
+                    async with session.get(poll_url, timeout=10) as resp:
+                        if resp.status == 200:
+                            tasks = await resp.json()
+                            if isinstance(tasks, list) and tasks:
+                                for task in tasks:
+                                    import hashlib
+                                    task_hash = hashlib.sha256(task.get('prompt', '').encode()).hexdigest()
+                                    if task_hash in self.processed_task_hashes:
+                                        continue
+                                    
+                                    self.processed_task_hashes.add(task_hash)
+                                    logger.info("Polling Gateway: Received new task", task_hash=task_hash[:8])
+                                    
+                                    class MockMessage:
+                                        def __init__(self, prompt, admin_id, bot):
+                                            self.text = prompt
+                                            self.from_user = type('MockUser', (), {'id': admin_id})()
+                                            self.reply_to_message = None
+                                            self.bot = bot
+                                        async def reply(self, text, *args, **kwargs):
+                                            logger.info("Polling Result", result=text)
+                                            # Create an awaitable object for edit_text
+                                            class MockStatus:
+                                                async def edit_text(self, *a, **k): return True
+                                            return MockStatus()
+
+                                    mock_msg = MockMessage(task.get('prompt'), self.admin_id, self.bot)
+                                    asyncio.create_task(self.handle_prompt(mock_msg))
+                    
+                    await asyncio.sleep(interval)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug("Polling Gateway Error", error=str(e))
+                    await asyncio.sleep(interval * 2)
 
     async def handle_callback_query(self, callback: CallbackQuery):
         """Handle inline button presses."""
@@ -557,6 +650,15 @@ class OpenClawGateway:
             status_callback=update_status,
         )
 
+        # Phase 3.4: Self-Healing Logic (One-time retry on failure)
+        if result.get("status") == "error":
+            logger.warning("Pipeline execution failed. Attempting self-healing retry...", brigade=brigade)
+            result = await self.pipeline.execute(
+                prompt=prompt,
+                brigade=brigade,
+                status_callback=update_status,
+            )
+
         if result.get("status") == "ask_user":
             question = result.get("question", "Оркестратору нужно уточнение.")
             if not hasattr(self, 'pending_ask_user'):
@@ -616,6 +718,14 @@ class OpenClawGateway:
         logger.info("Starting OpenClaw Gateway...")
         logger.info("Ollama URL", ollama_url=self.ollama_url)
         logger.info("Admin ID", admin_id=self.admin_id)
+
+        # Start background tasks
+        memory_task = asyncio.create_task(self._scheduled_memory_gc())
+        poll_task = asyncio.create_task(self._poll_remote_tasks())
+        self._bg_tasks.add(memory_task)
+        self._bg_tasks.add(poll_task)
+        memory_task.add_done_callback(self._bg_tasks.discard)
+        poll_task.add_done_callback(self._bg_tasks.discard)
 
         # Support ENV vars from start_wsl.sh
         use_webhook_env = os.environ.get("USE_WEBHOOK")

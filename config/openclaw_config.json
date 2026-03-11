@@ -18,7 +18,9 @@
       "bot_token": "8461845004:AAE3eAnAyohsRh9XMrkv3pNx56iACKmOuws",
       "admin_chat_id": "458765683"
     },
-    "ollama_url": "http://host.docker.internal:11434",
+    "ollama_url": "http://172.27.192.1:11434",
+    "polling_gateway_url": "http://172.27.192.1:12345/tasks.json",
+    "polling_interval": 5,
     "session_management": {
       "heartbeat_interval_minutes": 60,
       "auto_reset_context_messages": 15

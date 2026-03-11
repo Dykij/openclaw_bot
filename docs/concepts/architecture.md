@@ -23,8 +23,16 @@ Last updated: 2026-01-22
   - `/__openclaw__/canvas/` (agent-editable HTML/CSS/JS)
   - `/__openclaw__/a2ui/` (A2UI host)
     It uses the same port as the Gateway (default `18789`).
-
-## Components and flows
+ 
+ ## Repository Isolation: Factory vs Product
+ 
+ OpenClaw follows a strict isolation model:
+ - **The Factory (Core)**: `D:\openclaw_bot\openclaw_bot` contains the engine and shared protocols.
+ - **The Product (Bot)**: `D:\Dmarket_bot` contains the specific bot instance logic and API keys.
+ 
+ Development in the Factory should remain agnostic of specific Product implementations to ensure portability.
+ 
+ ## Components and flows
 
 ### Gateway (daemon)
 

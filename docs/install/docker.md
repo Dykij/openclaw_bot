@@ -26,7 +26,8 @@ Sandboxing details: [Sandboxing](/gateway/sandboxing)
 ## Requirements
 
 - Docker Desktop (or Docker Engine) + Docker Compose v2
-- At least 2 GB RAM for image build (`pnpm install` may be OOM-killed on 1 GB hosts with exit 137)
+- At least 4 GB RAM (8 GB recommended) for image build and execution.
+- **VRAM**: 16GB (RTX 5060 Ti) for stable local model execution using Ollama-in-Docker.
 - Enough disk for images + logs
 
 ## Containerized Gateway (Docker Compose)

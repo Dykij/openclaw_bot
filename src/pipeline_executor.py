@@ -20,18 +20,18 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
 import time
+from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional
+
 import aiohttp
 import structlog
-from contextlib import asynccontextmanager
-from src.task_queue import ModelTaskQueue
+
+from src.auto_rollback import AutoRollback
 
 # Injecting MCP Client
 from src.mcp_client import OpenClawMCPClient
-
-# Auto-Rollback safety net
-from src.auto_rollback import AutoRollback
+from src.task_queue import ModelTaskQueue
 
 logger = structlog.get_logger(__name__)
 
@@ -160,12 +160,16 @@ class PipelineExecutor:
                 model = role_config.get("model", "llama3.2")
                 system_prompt = role_config.get("system_prompt", "You are an AI assistant.")
 
-            # Append memory bank and agentic tooling / planning instructions
+            # Append memory bank and agentic tooling / planning instructions (STAR-logic)
             system_prompt += (
-                "\n\n[AGENT PROTOCOL]"
-                "\n1. Memory Bank: You have access to a .memory-bank directory for project documentation. Maintain context over time by writing your plans and schemas there."
-                "\n2. Tooling: Utilize bash utilities (jq, ripgrep, yq) when inspecting codebases or configs instead of writing heavy Python scripts."
-                "\n3. 90/10 Rule (STAR Framework): Spend 90% of your effort Planning and creating check-lists (e.g., task.md), and only 10% coding. Be deterministic."
+                "\n\n[AGENT PROTOCOL: STAR-STRATEGY]"
+                "\n1. Memory Bank: Use .memory-bank for persistence. Use the 'search_memory' tool for retrieving historical context (Hot/Domain/Cold tiers)."
+                "\n2. Tooling: Use bash utilities (jq, ripgrep, yq) via MCP for research."
+                "\n3. STAR Framework: Your response MUST follow this structure:"
+                "\n   SITUATION: Current state analysis."
+                "\n   TASK: Specific goal for this step."
+                "\n   ACTION: Reasoning (wrapped in <think> tags) and tool execution."
+                "\n   RESULT: Expected/Observed outcome."
             )
 
             # Inject BRAIN.md for Planners
@@ -207,9 +211,12 @@ class PipelineExecutor:
             prev_model = self.last_loaded_model
             
             async with self._vram_protection(model, prev_model):
-                # Execute inference
+                # Execute inference. Preserve <think> for Planners and Auditors for transparency.
+                preserve_think = any(role in role_name for role in ["Planner", "Foreman", "Orchestrator", "Auditor"])
                 active_mcp = self.openclaw_mcp if brigade == "OpenClaw" else self.dmarket_mcp
-                response = await self._call_ollama(model, system_prompt, step_prompt, role_name, role_config, active_mcp)
+                response = await self._call_ollama(
+                    model, system_prompt, step_prompt, role_name, role_config, active_mcp, preserve_think=preserve_think
+                )
                 
                 self.last_loaded_model = model
 
@@ -489,7 +496,16 @@ class PipelineExecutor:
             "status": "completed"
         }
 
-    async def _call_ollama(self, model: str, system_prompt: str, user_prompt: str, role_name: str, role_config: Dict[str, Any], mcp_client: OpenClawMCPClient) -> str:
+    async def _call_ollama(
+        self, 
+        model: str, 
+        system_prompt: str, 
+        user_prompt: str, 
+        role_name: str, 
+        role_config: Dict[str, Any], 
+        mcp_client: OpenClawMCPClient,
+        preserve_think: bool = False
+    ) -> str:
         """
         Calls Ollama API for a single inference step.
         Uses keep_alive=0 to immediately free VRAM for the next step.
@@ -585,15 +601,16 @@ class PipelineExecutor:
                                     if resp_tool_response.status == 200:
                                         data_tool_response = await resp_tool_response.json()
                                         text = data_tool_response["message"]["content"].strip()
-                                        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                                        if not preserve_think:
+                                            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
                                         return text
                                     else:
                                         return f"⚠️ API Error after tool call ({resp_tool_response.status})"
                             else:
                                 # No tool calls, just return the content
                                 text = data["message"]["content"].strip()
-                                # Strip <think>...</think> blocks (DeepSeek-R1)
-                                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                                if not preserve_think:
+                                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
                                 return text
                         else:
                             return f"⚠️ API Error ({resp.status})"

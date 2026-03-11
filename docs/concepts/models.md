@@ -167,6 +167,18 @@ claude setup-token
 openclaw models status
 ```
 
+It uses the same port as the Gateway (default `18789`).
+
+## Repository Isolation: Factory vs Product
+
+OpenClaw follows a strict isolation model:
+- **The Factory (Core)**: `D:\openclaw_bot\openclaw_bot` contains the engine and shared protocols.
+- **The Product (Bot)**: `D:\Dmarket_bot` contains the specific bot instance logic and API keys.
+
+Development in the Factory should remain agnostic of specific Product implementations to ensure portability.
+
+## Components and flows
+
 ## Scanning (OpenRouter free models)
 
 `openclaw models scan` inspects OpenRouter’s **free model catalog** and can
@@ -213,3 +225,11 @@ Merge mode precedence for matching provider IDs:
 - Non-empty `apiKey`/`baseUrl` already present in the agent `models.json` win.
 - Empty or missing agent `apiKey`/`baseUrl` fall back to config `models.providers`.
 - Other provider fields are refreshed from config and normalized catalog data.
+
+## Hardware Optimization: 16GB VRAM (RTX 5060 Ti)
+
+When running local models (e.g., via Ollama), memory management is critical:
+
+1. **Sequential Loading**: Always load one heavy model at a time.
+2. **Flush on Idle**: Use `keep_alive=0` in model requests or global config to ensure VRAM is released immediately after completion.
+3. **Avoid Parallelism**: Simultaneous requests to different heavy models on 16GB hardware will trigger OOM or context swapping, significantly degrading performance.

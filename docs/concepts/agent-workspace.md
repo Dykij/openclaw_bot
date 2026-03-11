@@ -14,6 +14,8 @@ file tools and for workspace context. Keep it private and treat it as memory.
 This is separate from `~/.openclaw/`, which stores config, credentials, and
 sessions.
 
+**External Bots**: For specialized products like the Dmarket bot, logic is typically maintained in an external directory (for example `D:\Dmarket_bot`) and integrated via absolute paths in the gateway configuration.
+
 **Important:** the workspace is the **default cwd**, not a hard sandbox. Tools
 resolve relative paths against the workspace, but absolute paths can still reach
 elsewhere on the host unless sandboxing is enabled. If you need isolation, use

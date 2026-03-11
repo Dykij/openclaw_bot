@@ -16,6 +16,7 @@ Already followed [Getting Started](/start/getting-started)? You're all set — t
 - **[Node 22+](/install/node)** (the [installer script](#install-methods) will install it if missing)
 - macOS, Linux, or Windows
 - `pnpm` only if you build from source
+- **GPU (Agent Support)**: NVIDIA RTX 5060 Ti (16GB VRAM) recommended for local model execution.
 
 <Note>
 On Windows, we strongly recommend running OpenClaw under [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install).

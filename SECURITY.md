@@ -264,14 +264,19 @@ docker run --read-only --cap-drop=ALL \
   openclaw/openclaw:latest
 ```
 
-## Security Scanning
+## Hardware Constraints & Stability (Important)
 
-This project uses `detect-secrets` for automated secret detection in CI/CD.
-See `.detect-secrets.cfg` for configuration and `.secrets.baseline` for the baseline.
+OpenClaw is optimized for high-performance hardware with specific limitations.
 
-Run locally:
+- **GPU Requirement**: NVIDIA RTX 5060 Ti (16GB VRAM) or equivalent.
+- **VRAM Management**: Due to the 16GB constraint, the system enforces **sequential model loading**. Heavy models (e.g., `arkady-reasoning-27b`) must be loaded one at a time with `keep_alive=0` to prevent OOM (Out of Memory) crashes.
+- **Stability**: Attempting to load multiple large models simultaneously is considered a misuse of the system and may lead to instability.
 
-```bash
-pip install detect-secrets==1.5.0
-detect-secrets scan --baseline .secrets.baseline
-```
+## Repository & Domain Isolation
+
+The OpenClaw ecosystem is divided into two distinct trust domains:
+
+1.  **The Factory (Core Systems)**: Located at `D:\openclaw_bot\openclaw_bot`. This contains the engine, agents, and system logic.
+2.  **The Product (Bot Instance)**: Located at `D:\Dmarket_bot`. This contains specific trading logic, API integrations, and user data for the Dmarket bot.
+
+Operations in the Factory domain must remain isolated from the Product domain to ensure system integrity and prevent data leakages between independent bot instances.

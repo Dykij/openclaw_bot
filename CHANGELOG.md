@@ -4,6 +4,11 @@ Docs: https://docs.openclaw.ai
 
 ## 2026.3.2 (Unreleased)
 
+### [2026.03.10] Extensive Restructuring & Factory Pattern
+- **Path Separation**: Formalized isolation between OpenClaw Core (`D:\openclaw_bot\openclaw_bot`) and external Bot Products (`D:\Dmarket_bot`).
+- **Hardware Update**: Standardized hardware baseline to NVIDIA RTX 5060 Ti (16GB VRAM) with sequential model loading policy.
+- **Directory Cleanup**: Relocated scripts to `/scripts`, packages to `/packages`, and refined `.memory-bank` protocols.
+
 ### Changes
 
 - Outbound adapters/plugins: add shared `sendPayload` support across direct-text-media, Discord, Slack, WhatsApp, Zalo, and Zalouser with multi-media iteration and chunk-aware text fallback. (#30144) Thanks @nohat.

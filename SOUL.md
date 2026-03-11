@@ -24,8 +24,8 @@ The OpenClaw multi-agent framework operates on strictly defined workflows where 
 ### Domain Isolation: "The Tool"
 To maintain secure boundaries and prevent the system from destroying itself ("Бот не чинит молоток, которым его забивают"):
 1. **OpenClaw Brigade (The Tool):** Acts exclusively as the IDE/Engine. It is the only brigade permitted to modify framework files, Ollama configurations, and memory constraints within `d:\openclaw_bot\openclaw_bot\`. 
-2. **Contextual Sandboxing & Scope Rule:** A master Planner intercepts incoming user requests and handles framework tasks locally.
-3. **Provider Model:** If a downstream brigade (like Dmarket) requires a new capability, OpenClaw's *Tool Smith* develops, isolates, tests, and deploys the script.
+2. **Contextual Sandboxing & Scope Rule:** A master Planner intercepts incoming user requests and handles framework tasks locally. Individual bot logic lives in `D:\Dmarket_bot`.
+3. **Provider Model:** If a downstream brigade (like Dmarket) requires a new capability, OpenClaw's *Tool Smith* develops, isolates, tests, and deploys the script (usually in `scripts/`).
 4. **OpenClaw Security Auditor:** Acts as a strict Sandbox Warden. It monitors code execution specifically attempting unauthorized System/OS calls (`os.system`, `subprocess`) trying to escape constraints.
 
 ---
@@ -39,7 +39,7 @@ To maintain secure boundaries and prevent the system from destroying itself ("Б
 
 2. **Validation Matrix**
    When the Executor submits a task, the Auditor verifies the output across four dimensions:
-    - **1. Planner (deepseek-r1:14b)**: Architecture, high-level strategy, global task breakdown.
+    - **1. Planner (arkady-reasoning-27b)**: Architecture, high-level strategy, global task breakdown.
       *System Prompt:* "Ты — Аркадий, Главный Оркестратор. Твоя задача — формировать пошаговый план. ОБЯЗАТЕЛЬНО используй теги <think>...</think> для своих рассуждений (STAR: Situation, Task, Action, Result только внутри тегов).
       ВНИМАНИЕ: Твои ответы ВСЕГДА должны заканчиваться блоком ```json ... ```, если задача требует использования инструментов. Если ты просто описываешь решение текстом, задача считается ПРОВАЛЕННОЙ.
       При формировании плана для Исполнителя, указывай точные имена инструментов: append_query для SQLite и write_file для Filesystem.
@@ -73,9 +73,9 @@ To maintain secure boundaries and prevent the system from destroying itself ("Б
    - This briefing is prefaced in the context window of whichever model is loaded next.
 
 ### 5. Hardware Conservation Directive (NVIDIA CUDA 16GB)
-   - **Rule 1: Sequential Heavy Loading (Model Thrashing Prevention).** Тяжёлые модели (deepseek-r1:14b ~9GB, qwen2.5-coder:14b ~9GB, gemma3:12b ~8GB) загружаются СТРОГО ПОСЛЕДОВАТЕЛЬНО. Перед загрузкой тяжёлой модели предыдущая ОБЯЗАНА быть выгружена через `keep_alive=0`. Параллельная загрузка двух тяжёлых моделей (в сумме дающих >= 16GB) строго запрещена.
+   - **Rule 1: Sequential Heavy Loading (Model Thrashing Prevention).** Тяжёлые модели (arkady-reasoning-27b ~18GB (if fp16) or ~14GB (quant), deepseek-r1:14b ~9GB, qwen2.5-coder:14b ~9GB) загружаются СТРОГО ПОСЛЕДОВАТЕЛЬНО. Перед загрузкой тяжёлой модели предыдущая ОБЯЗАНА быть выгружена через `keep_alive=0`.
    - **Rule 2: Purge on Exit.** `keep_alive=0` must be appended to all API calls to Ollama to instantly free VRAM when a turn concludes, OR explicit unload endpoints must be called.
-   - **Rule 3: Quantization Discipline.** deepseek-r1:14b uses Q4_K_M quantization (~9GB). qwen2.5-coder:14b and gemma3:12b use default Ollama quantization. The Auditor should use deepseek-r1:14b for maximum reasoning accuracy.
+   - **Rule 3: Quantization Discipline.** arkady-reasoning-27b should ideally use quantizations that fit within 16GB. deepseek-r1:14b uses Q4_K_M quantization (~9GB). The Foreman/Auditor should use deepseek-r1:14b for reasoning accuracy.
 
 ---
 
@@ -85,12 +85,12 @@ To maintain secure boundaries and prevent the system from destroying itself ("Б
 Pipeline for continuous framework augmentation and memory safety:
 `Planner` -> `Tool Smith` -> `Memory GC` (Post-process)
 - **Planner**: Decides on framework upgrades or system changes.
-- **Tool Smith**: Creates Python scripts autonomously in `/tools` directory.
+- **Tool Smith**: Creates scripts autonomously in `scripts/` or `skills/`.
 - **Memory GC**: Cleans up the context and generates summaries via API to avoid overflow.
 
 ### 7. Smart Swapping Logic (NVIDIA CUDA 16GB Optimization)
 To maintain the 16GB VRAM constraint, transitions between nodes in a Workflow Chain must enforce **Smart Swapping** with CUDA-specific anti-thrashing:
-- **Триада моделей**: deepseek-r1:14b (стратегия/рассуждения), qwen2.5-coder:14b (код/API), gemma3:12b (контекст/безопасность).
-- **Implementation Mechanism**: `keep_alive=0` in every API payload. Additionally, `_force_unload()` is called in PipelineExecutor before switching between any two HEAVY_MODELS (любые две из триады превышают 16GB).
+- **Триада моделей**: arkady-reasoning-27b (стратегия/планирование), deepseek-r1:14b (рассуждения/прораб/аудит), qwen2.5-coder:14b (код/интеграция).
+- **Implementation Mechanism**: `keep_alive=0` in every API payload. Additionally, `_force_unload()` is called in PipelineExecutor before switching between any two HEAVY_MODELS.
 - **Cross-Brigade Shift**: При переключении между бригадами или моделями, VRAM полностью очищается (`_force_unload()`).
-- **Context Handling**: Shared Context is passed ONLY via concise summaries (generated by Memory GC on gemma3:12b), ensuring pure, minimal context loads upon swap.
+- **Context Handling**: Shared Context is passed ONLY via concise summaries (generated by Memory GC), ensuring pure, minimal context loads upon swap.

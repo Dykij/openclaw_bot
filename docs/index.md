@@ -54,7 +54,7 @@ OpenClaw is a **self-hosted gateway** that connects your favorite chat apps — 
 - **Agent-native**: built for coding agents with tool use, sessions, memory, and multi-agent routing
 - **Open source**: MIT licensed, community-driven
 
-**What do you need?** Node 22+, an API key (Anthropic recommended), and 5 minutes.
+**What do you need?** Node 22+, an API key (Anthropic recommended), and an NVIDIA RTX 5060 Ti (16GB VRAM) if you plan to run autonomous agents with local heavy models.
 
 ## How it works
 
