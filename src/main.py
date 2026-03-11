@@ -629,8 +629,8 @@ class OpenClawGateway:
             brigade = await self.classify_intent(prompt)
 
         status_msg = await message.reply(
-            f"🤖 *Pipeline ({brigade})* запущен...\n_Маршрутизация задачи в бригаду..._",
-            parse_mode="Markdown",
+            f"🤖 *Pipeline ({brigade})* запущен\\.\\.\\.\n_Маршрутизация задачи в бригаду\\.\\.\\._",
+            parse_mode="MarkdownV2",
         )
 
         await self.archivist.send_status(
@@ -640,8 +640,11 @@ class OpenClawGateway:
         # 2. Execute Pipeline (Chain-of-Agents)
         async def update_status(role, model, text):
             try:
+                r = self.archivist.escape_markdown(role)
+                m = self.archivist.escape_markdown(model)
+                t = self.archivist.escape_markdown(text)
                 await status_msg.edit_text(
-                    f"🏴 *{brigade}* | ⚙️ `{role}` (`{model}`)\n_{text}_", parse_mode="Markdown"
+                    f"🏴 *{brigade}* | ⚙️ `{r}` (`{m}`)\n_{t}_", parse_mode="MarkdownV2"
                 )
             except Exception:
                 pass  # Telegram rate limit on edits

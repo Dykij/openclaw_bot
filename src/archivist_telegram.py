@@ -42,12 +42,17 @@ class TelegramArchivist:
 
     async def send_status(self, agent_role: str, model_name: str, status: str):
         """Sends a short status update (e.g., 'Thinking', 'Checking Sandbox')."""
-        message = f"🤖 *{agent_role}* (`{model_name}`) is currently:\n_{status}_..."
+        r = self.escape_markdown(agent_role)
+        m = self.escape_markdown(model_name)
+        s = self.escape_markdown(status)
+        message = f"🤖 *{r}* (`{m}`) is currently:\n_{s}_\\.\\.\\."
         await self._send_to_telegram(message)
 
     async def send_summary(self, title: str, summary_text: str):
         """Summarizes tech logs and sends to Telegram handling character limits."""
-        full_text = f"📊 *{title}*\n\n{summary_text}"
+        t = self.escape_markdown(title)
+        s = self.escape_markdown(summary_text)
+        full_text = f"📊 *{t}*\n\n{s}"
         parts = self.split_message(full_text)
 
         for i, part in enumerate(parts):
@@ -59,11 +64,20 @@ class TelegramArchivist:
             # (usually ~30 msgs per sec, but 1-2 sec is safer for bots)
             await asyncio.sleep(1.0)
 
+    def escape_markdown(self, text: str) -> str:
+        """
+        Escapes reserved characters for Telegram MarkdownV2.
+        Characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
+        """
+        escape_chars = r'_*[]()~`>#+-=|{}.!'
+        return "".join(['\\' + char if char in escape_chars else char for char in text])
+
     async def _send_to_telegram(self, text: str):
+        # We use MarkdownV2 for better support, but it requires strict escaping
         payload = {
             "chat_id": self.chat_id,
             "text": text,
-            "parse_mode": "Markdown"
+            "parse_mode": "MarkdownV2"
         }
         async with aiohttp.ClientSession() as session:
             try:

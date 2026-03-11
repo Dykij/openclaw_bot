@@ -170,6 +170,7 @@ class PipelineExecutor:
                 "\n   TASK: Specific goal for this step."
                 "\n   ACTION: Reasoning (wrapped in <think> tags) and tool execution."
                 "\n   RESULT: Expected/Observed outcome."
+                "\n   ВАЖНО: Весь итоговый ответ (SITUATION, TASK, ACTION, RESULT) должен быть на РУССКОМ ЯЗЫКЕ."
             )
 
             # Inject BRAIN.md for Planners
