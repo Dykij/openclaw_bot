@@ -308,7 +308,7 @@ class OpenClawGateway:
         await message.reply(
             "🦞 *OpenClaw v2026: Dual-Brigade Online*\n\n"
             f"🛠️ GPU: {self.config['system']['hardware']['target_gpu']}\n"
-            f"🧠 Модели: Llama-3.1-8B / DeepSeek-R1-8B / Gemma-3-12B / Qwen2.5-Coder-7B\n"
+            f"🧠 Модели: Qwen2.5-Coder-14B-AWQ / DeepSeek-R1-14B-AWQ / Gemma-3-12B-AWQ-INT4\n"
             f"📡 vLLM: `{self.vllm_url}`\n\n"
             "Выбери нужный раздел меню ниже или отправь задачу текстом для роутинга в бригаду.",
             parse_mode="Markdown",

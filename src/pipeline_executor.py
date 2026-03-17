@@ -170,7 +170,7 @@ class PipelineExecutor:
 
         for i, role_name in enumerate(chain):
             if task_type:
-                model = self.config.get("system", {}).get("model_router", {}).get(task_type, "Qwen/Qwen2.5-14B-Instruct-AWQ")
+                model = self.config.get("system", {}).get("model_router", {}).get(task_type, "Qwen/Qwen2.5-Coder-14B-AWQ")
                 role_config = {"model": model}
                 system_prompt = "Выполняй только ту задачу, которая указана в промпте. Никаких лишних слов."
             else:
@@ -182,7 +182,7 @@ class PipelineExecutor:
                     logger.warning(f"Role '{role_name}' not found in config, skipping")
                     continue
     
-                model = role_config.get("model", "Qwen/Qwen2.5-14B-Instruct-AWQ")
+                model = role_config.get("model", "Qwen/Qwen2.5-Coder-14B-AWQ")
                 system_prompt = role_config.get("system_prompt", "You are an AI assistant.")
 
             # --- ROLE-AWARE PROMPT INJECTION ---
@@ -388,7 +388,7 @@ class PipelineExecutor:
                         }
                     
                     if "Planner" in role_name or "Foreman" in role_name:
-                        executor_model = self.config.get("system", {}).get("model_router", {}).get("tool_execution", "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ")
+                        executor_model = self.config.get("system", {}).get("model_router", {}).get("tool_execution", "Qwen/Qwen2.5-Coder-14B-AWQ")
                         logger.info(f"JSON instructions detected from Planner, executing Handoff to {executor_model}")
                         steps_results.append({
                             "role": role_name,
