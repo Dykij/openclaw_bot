@@ -23,7 +23,14 @@
     "vllm_gpu_memory_utilization": 0.90,
     "vllm_max_model_len": 8192,
     "vllm_quantization": null,
-    "vllm_extra_args": ["--enable-prefix-caching", "--enable-auto-tool-choice", "--tool-call-parser", "hermes"],
+    "vllm_extra_args": [
+      "--enable-prefix-caching",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser", "hermes",
+      "--disable-log-stats",
+      "--uvicorn-log-level", "warning",
+      "--max-num-seqs", "4"
+    ],
     "polling_gateway_url": "",
     "polling_interval": 30,
     "session_management": {
@@ -31,6 +38,7 @@
       "auto_reset_context_messages": 15
     },
     "model_router": {
+      "classification": "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ",
       "risk_analysis": "casperhansen/deepseek-r1-distill-qwen-14b-awq",
       "tool_execution": "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ",
       "data_parsing": "casperhansen/deepseek-r1-distill-qwen-14b-awq",

@@ -589,10 +589,24 @@ class PipelineExecutor:
             " Максимум конкретики. Ответ на РУССКОМ ЯЗЫКЕ."
         )
 
-        # max_tokens: cap output to prevent verbose over-generation
-        # Short prompts → 2048 tokens max, long prompts → up to 4096
-        estimated_input_tokens = len(user_prompt + system_prompt) // 4
-        dynamic_max_tokens = min(4096, max(1024, min(estimated_input_tokens, 2048) + 512))
+        # max_tokens: role-aware caps to prevent over-generation and reduce latency.
+        # Archivist only formats/summarises → 1024 default.
+        # Executors produce code/JSON → 2048 default.
+        # Planners/Foremen need deeper reasoning → 3072 default.
+        # Other roles use a prompt-length heuristic capped at 4096.
+        # Per-role "max_tokens" in config overrides the type default.
+        role_max = role_config.get("max_tokens")
+        if "Archivist" in role_name or "State_Manager" in role_name:
+            dynamic_max_tokens = role_max if role_max else 1024
+        elif any(ex in role_name for ex in ("Executor", "Latency_Optimizer", "Market_Trend_Extrapolator")):
+            dynamic_max_tokens = role_max if role_max else 2048
+        elif any(pl in role_name for pl in ("Planner", "Foreman", "Orchestrator")):
+            dynamic_max_tokens = role_max if role_max else 3072
+        else:
+            estimated_input_tokens = len(user_prompt + system_prompt) // 4
+            dynamic_max_tokens = role_max if role_max else min(
+                4096, max(1024, min(estimated_input_tokens, 2048) + 512)
+            )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -616,17 +630,21 @@ class PipelineExecutor:
                     logger.debug(f"Injecting {len(model_tools)} tools for role {role_name}")
 
         temperature = role_config.get("temperature", 0.3)
+        repetition_penalty = role_config.get("repetition_penalty", 1.05)
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": False,
             "max_tokens": dynamic_max_tokens,
             "temperature": temperature,
+            "repetition_penalty": repetition_penalty,
         }
         if model_tools:
             payload["tools"] = model_tools
 
-        config_timeout = self.config.get("system", {}).get("timeout_sec", 450)
+        # Prefer per-role timeout; fall back to system-wide default (450 s).
+        system_timeout = self.config.get("system", {}).get("timeout_sec", 450)
+        config_timeout = role_config.get("timeout_sec", system_timeout)
 
         # Ensure the required model is loaded via vLLM manager
         if self.vllm_manager:
@@ -829,8 +847,12 @@ class PipelineExecutor:
         clean = re.sub(r'\[Proof of Work[^\]]*\].*?\n', '', clean)
         clean = re.sub(r'\n{2,}', '\n', clean).strip()
 
-        # 4. Smart truncation: up to 1500 chars, respecting sentence boundaries
-        max_chars = 1500
+        # 4. Smart truncation: budget varies by role.
+        # Executors and Planners benefit from more context; Archivist needs less.
+        if any(ex in role_name for ex in ("Executor", "Planner", "Foreman", "Orchestrator")):
+            max_chars = 2000
+        else:
+            max_chars = 1200
         if len(clean) > max_chars:
             cut = clean[:max_chars]
             last_boundary = max(cut.rfind('. '), cut.rfind('! '), cut.rfind('? '), cut.rfind('\n'))

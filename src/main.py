@@ -609,9 +609,11 @@ class OpenClawGateway:
         # Try LLM-based classification
         import aiohttp
 
-        # Use model from config; fall back to first available role model
+        # Prefer the dedicated lightweight classification model (7B) so we don't waste
+        # VRAM by loading the heavy 14B reasoning model for a simple 16-token routing decision.
         classify_model = (
-            self.config.get("system", {}).get("model_router", {}).get("risk_analysis")
+            self.config.get("system", {}).get("model_router", {}).get("classification")
+            or self.config.get("system", {}).get("model_router", {}).get("tool_execution")
             or next(
                 (
                     d["model"]

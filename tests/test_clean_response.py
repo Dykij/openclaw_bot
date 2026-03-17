@@ -116,6 +116,32 @@ def test_sanitize_instruction_override():
     print("[PASS] Instruction override attempt filtered")
 
 
+def test_compress_archivist_shorter():
+    """Archivist context is capped at 1200 chars; assert compressed body ≤1250 (includes '...' suffix)."""
+    # _compress_for_next_step does not access instance state, so any object works as self.
+    executor = PipelineExecutor.__new__(PipelineExecutor)
+    long_text = "Sentence fact. " * 200  # ~3000 chars
+    compressed = executor._compress_for_next_step("Archivist", long_text)
+    # Strip the "[Archivist Output]: " prefix for length check
+    body = compressed.replace("[Archivist Output]: ", "")
+    assert len(body) <= 1250, f"Expected ≤1250 chars (1200 cap + '...' overhead), got {len(body)}"
+    print("[PASS] Archivist context compressed to ≤1200 chars")
+
+
+def test_compress_executor_longer():
+    """Executor context is capped at 2000 chars; Archivist cap is 1200 — executor body should be longer."""
+    executor = PipelineExecutor.__new__(PipelineExecutor)
+    long_text = "Detail fact info. " * 200  # ~3600 chars
+    compressed = executor._compress_for_next_step("Executor_API", long_text)
+    body = compressed.replace("[Executor_API Output]: ", "")
+    assert len(body) <= 2100, f"Expected ≤2100 chars (2000 cap + '...' overhead), got {len(body)}"
+    # Executor context budget is larger than Archivist's
+    archivist_compressed = executor._compress_for_next_step("Archivist", long_text)
+    archivist_body = archivist_compressed.replace("[Archivist Output]: ", "")
+    assert len(body) >= len(archivist_body), "Executor context should be >= Archivist context"
+    print("[PASS] Executor context compressed to ≤2000 chars and longer than Archivist")
+
+
 if __name__ == "__main__":
     tests = [
         test_star_labels_removed,
@@ -131,6 +157,8 @@ if __name__ == "__main__":
         test_json_artifacts_removed,
         test_sanitize_file_content,
         test_sanitize_instruction_override,
+        test_compress_archivist_shorter,
+        test_compress_executor_longer,
     ]
     
     passed = 0
