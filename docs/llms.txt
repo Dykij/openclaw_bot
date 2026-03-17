@@ -1,0 +1,137 @@
+# OpenClaw
+
+> OpenClaw is a self-hosted gateway that connects WhatsApp, Telegram, Discord, iMessage, Slack, and 20+ messaging channels to AI coding agents. Run a single Gateway process on your own machine and message your AI assistant from anywhere. It supports 50+ model providers, multi-agent routing, voice, camera, skills, and a plugin system.
+
+- Documentation: https://docs.openclaw.ai
+- Source code: https://github.com/openclaw/openclaw
+- Community: https://discord.com/invite/clawd
+- Skills marketplace: https://clawhub.com
+- License: MIT
+
+## Getting started
+
+- [Getting Started](https://docs.openclaw.ai/start/getting-started): First-time setup guide with installation, configuration, and channel connection
+- [Quick Start](https://docs.openclaw.ai/start/quickstart): Minimal steps to get OpenClaw running in under 5 minutes
+- [Onboarding](https://docs.openclaw.ai/start/onboarding): Interactive setup wizard for new users
+- [Configuration](https://docs.openclaw.ai/gateway/configuration): Core Gateway settings, tokens, model providers, and channel configuration
+- [Configuration Examples](https://docs.openclaw.ai/gateway/configuration-examples): Real-world config snippets for common setups
+
+## Installation
+
+- [Docker](https://docs.openclaw.ai/install/docker): Run OpenClaw in Docker containers with persistent config
+- [Nix](https://docs.openclaw.ai/install/nix): NixOS / nix-shell reproducible installation
+- [Updating / Rollback](https://docs.openclaw.ai/install/updating): Upgrade to latest version or roll back safely
+- [Bun workflow](https://docs.openclaw.ai/install/bun): Experimental Bun-based development flow
+
+## Architecture and core concepts
+
+- [Architecture](https://docs.openclaw.ai/concepts/architecture): WebSocket gateway architecture, components, client flows, and wire protocol
+- [Features](https://docs.openclaw.ai/concepts/features): Complete feature list and capability matrix
+- [Agent Runtime](https://docs.openclaw.ai/concepts/agent): How the agent loop processes messages, calls tools, and manages state
+- [Agent Workspace](https://docs.openclaw.ai/concepts/agent-workspace): Filesystem layout for agent configs, skills, and templates
+- [Memory](https://docs.openclaw.ai/concepts/memory): Long-term memory system with vector search and session recall
+- [Agent Loop](https://docs.openclaw.ai/concepts/agent-loop): Step-by-step lifecycle of a single agent turn
+- [Streaming](https://docs.openclaw.ai/concepts/streaming): Real-time response streaming and chunking protocol
+- [Multi-agent](https://docs.openclaw.ai/concepts/multi-agent): Multi-agent routing, delegation, and concurrent agent execution
+- [Compaction](https://docs.openclaw.ai/concepts/compaction): Context window compaction and token optimization strategies
+- [Sessions](https://docs.openclaw.ai/concepts/session): Session lifecycle, persistence, and management
+- [Queue](https://docs.openclaw.ai/concepts/queue): Message queueing and rate limiting
+- [Model Failover](https://docs.openclaw.ai/concepts/model-failover): Automatic failover between model providers
+- [Models](https://docs.openclaw.ai/concepts/models): Supported models, model configuration, and provider setup
+- [OAuth](https://docs.openclaw.ai/concepts/oauth): OAuth authentication flows for third-party integrations
+
+## Messaging channels
+
+- [Channels Overview](https://docs.openclaw.ai/channels): Hub page listing all supported messaging channels
+- [WhatsApp](https://docs.openclaw.ai/channels/whatsapp): WhatsApp Business API and web bridge setup
+- [Telegram](https://docs.openclaw.ai/channels/telegram): Telegram Bot API configuration
+- [Discord](https://docs.openclaw.ai/channels/discord): Discord bot setup and server integration
+- [Slack](https://docs.openclaw.ai/channels/slack): Slack App and workspace integration
+- [Signal](https://docs.openclaw.ai/channels/signal): Signal messenger bridge setup
+- [iMessage (BlueBubbles)](https://docs.openclaw.ai/channels/bluebubbles): iMessage integration via BlueBubbles
+- [Mattermost](https://docs.openclaw.ai/channels/mattermost): Mattermost plugin channel
+- [Channel Routing](https://docs.openclaw.ai/channels/channel-routing): How messages are routed between channels and agents
+- [Groups](https://docs.openclaw.ai/channels/groups): Group chat support and configuration
+- [WebChat](https://docs.openclaw.ai/web/webchat): Embeddable web chat widget
+
+## Model providers
+
+- [Model Providers Hub](https://docs.openclaw.ai/providers/models): Overview and comparison of all supported providers
+- [OpenAI](https://docs.openclaw.ai/providers/openai): GPT-4, GPT-5, o-series models
+- [Anthropic](https://docs.openclaw.ai/providers/anthropic): Claude models (Sonnet, Opus, Haiku)
+- [Google](https://docs.openclaw.ai/providers/google): Gemini models
+- [Ollama](https://docs.openclaw.ai/providers/ollama): Self-hosted open models via Ollama
+- [Perplexity](https://docs.openclaw.ai/providers/perplexity): Sonar models with built-in web search and deep research
+- [xAI](https://docs.openclaw.ai/providers/xai): Grok models
+
+## Gateway operations
+
+- [Gateway Runbook](https://docs.openclaw.ai/gateway): Main gateway operations reference
+- [Network Model](https://docs.openclaw.ai/gateway/network-model): Networking, ports, and firewall configuration
+- [Pairing](https://docs.openclaw.ai/gateway/pairing): Device pairing for mobile nodes
+- [Health](https://docs.openclaw.ai/gateway/health): Health checks and monitoring
+- [Logging](https://docs.openclaw.ai/gateway/logging): Log configuration and log levels
+- [Security](https://docs.openclaw.ai/gateway/security): Security model, sandboxing, and trust boundaries
+- [Remote Access](https://docs.openclaw.ai/gateway/remote): SSH tunnels, Tailscale, and remote gateway patterns
+- [Troubleshooting](https://docs.openclaw.ai/gateway/troubleshooting): Common issues and fixes
+
+## Tools and automation
+
+- [Tools Overview](https://docs.openclaw.ai/tools): All agent tools and capabilities
+- [Exec Tool](https://docs.openclaw.ai/tools/exec): Shell command execution with safety controls
+- [Browser](https://docs.openclaw.ai/tools/browser): Web browser automation and control
+- [Skills](https://docs.openclaw.ai/tools/skills): Skill system for extending agent capabilities
+- [ClawHub](https://docs.openclaw.ai/tools/clawhub): Community skills marketplace
+- [Sub-agents](https://docs.openclaw.ai/tools/subagents): Spawning and managing sub-agents
+- [Cron Jobs](https://docs.openclaw.ai/automation/cron-jobs): Scheduled task automation
+- [Webhooks](https://docs.openclaw.ai/automation/webhook): HTTP webhook ingress
+- [Thinking](https://docs.openclaw.ai/tools/thinking): Extended thinking and verbose reasoning modes
+
+## Nodes, media, and voice
+
+- [Nodes](https://docs.openclaw.ai/nodes): iOS and Android companion node devices
+- [Camera](https://docs.openclaw.ai/nodes/camera): Camera access and image capture
+- [Images](https://docs.openclaw.ai/nodes/images): Image processing pipeline
+- [Audio](https://docs.openclaw.ai/nodes/audio): Audio capture and playback
+- [Voice Wake](https://docs.openclaw.ai/nodes/voicewake): Wake word detection and voice activation
+- [Talk Mode](https://docs.openclaw.ai/nodes/talk): Real-time voice conversation mode
+
+## Platforms
+
+- [Platforms Overview](https://docs.openclaw.ai/platforms): Supported platforms and installation methods
+- [macOS](https://docs.openclaw.ai/platforms/macos): macOS companion app with menu bar, voice wake, Canvas
+- [iOS](https://docs.openclaw.ai/platforms/ios): iOS node app with camera, screen, and device actions
+- [Android](https://docs.openclaw.ai/platforms/android): Android node app
+- [Windows (WSL2)](https://docs.openclaw.ai/platforms/windows): Windows setup via WSL2
+- [Linux](https://docs.openclaw.ai/platforms/linux): Native Linux installation
+
+## CLI reference
+
+- [CLI Overview](https://docs.openclaw.ai/cli): Full CLI command reference with examples
+
+## Web interfaces
+
+- [Dashboard](https://docs.openclaw.ai/web/dashboard): Local web dashboard for gateway management
+- [Control UI](https://docs.openclaw.ai/web/control-ui): Advanced control interface
+- [Terminal UI](https://docs.openclaw.ai/web/tui): Terminal-based user interface
+
+## Help and troubleshooting
+
+- [Help](https://docs.openclaw.ai/help): Common fixes and troubleshooting entry point
+- [FAQ](https://docs.openclaw.ai/help/faq): Frequently asked questions
+- [Doctor](https://docs.openclaw.ai/gateway/doctor): Automated diagnostic tool
+
+## Technical reference
+
+- [Token Usage](https://docs.openclaw.ai/reference/token-use): Token counting and usage tracking
+- [Prompt Caching](https://docs.openclaw.ai/reference/prompt-caching): LLM prompt caching for cost reduction
+- [API Usage Costs](https://docs.openclaw.ai/reference/api-usage-costs): Cost estimation and optimization
+- [Testing](https://docs.openclaw.ai/reference/test): Test suite documentation and CI pipeline
+- [Release Checklist](https://docs.openclaw.ai/reference/RELEASING): Release process and checklist
+- [AI Discoverability](https://docs.openclaw.ai/reference/ai-discoverability): How to optimize documentation for AI search and deep research
+
+## Optional
+
+- [OpenProse](https://docs.openclaw.ai/prose): AI writing assistant
+- [Network Hub](https://docs.openclaw.ai/network): Cross-gateway networking
+- [Showcase](https://docs.openclaw.ai/start/showcase): Community showcase and examples

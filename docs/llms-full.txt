@@ -1,0 +1,213 @@
+# OpenClaw — Full Documentation Reference
+
+> OpenClaw is a self-hosted gateway that connects WhatsApp, Telegram, Discord, iMessage, Slack, and 20+ messaging channels to AI coding agents. Run a single Gateway process on your own machine and message your AI assistant from anywhere. It supports 50+ model providers (OpenAI, Anthropic, Google, Ollama, Perplexity, xAI, and more), multi-agent routing, voice, camera, skills, and a plugin system. OpenClaw is MIT-licensed, TypeScript-based, and runs on Node.js 22+.
+
+- Documentation: https://docs.openclaw.ai
+- Source code: https://github.com/openclaw/openclaw
+- Community: https://discord.com/invite/clawd
+- Skills marketplace: https://clawhub.com
+- License: MIT
+
+---
+
+## What is OpenClaw?
+
+OpenClaw is a self-hosted AI gateway that acts as a bridge between messaging platforms and AI models. You install it on your own hardware (macOS, Linux, Windows via WSL2, Docker, or Nix), configure your preferred AI model provider, connect one or more messaging channels, and then interact with your AI assistant through familiar chat interfaces. The system runs a single long-lived Gateway daemon that manages WebSocket connections, routes messages between channels and agents, and provides tools for code execution, web browsing, file management, voice, camera, and automation.
+
+Key differentiators:
+- **Self-hosted**: Your data stays on your machine. No third-party cloud required.
+- **Multi-channel**: Connect 20+ messaging platforms simultaneously.
+- **Multi-provider**: Use 50+ AI model providers interchangeably with automatic failover.
+- **Agent system**: Extensible agent runtime with tools, skills, sub-agents, and memory.
+- **Plugin architecture**: Extend functionality via npm-based plugins and community skills.
+
+---
+
+## Getting started
+
+### Installation
+OpenClaw can be installed via npm (`npm install -g openclaw`), Docker, Nix, or built from source. The quickstart guide walks through: (1) installing the CLI, (2) running the setup wizard (`openclaw wizard`), and (3) connecting your first channel. The wizard auto-configures a model provider and messaging channel.
+
+### Configuration
+OpenClaw uses JSON5 configuration stored at `~/.openclaw/config.json5`. Configuration can be edited via: the setup wizard (`openclaw wizard`), CLI commands (`openclaw config set`), the Control UI web interface, or direct file editing. The config includes model provider tokens, channel credentials, agent behavior settings, and tool permissions.
+
+---
+
+## Architecture
+
+OpenClaw runs as a single Gateway daemon process that:
+1. Listens on a WebSocket port (default 18789) for control-plane clients (macOS app, CLI, web UI, mobile nodes).
+2. Connects to messaging channels (WhatsApp, Telegram, Discord, etc.) via channel adapters.
+3. Routes incoming messages to the configured AI agent.
+4. The agent processes messages through the agent loop: receives message → builds context → calls model → optionally uses tools → sends response.
+5. Responses are streamed back to the originating channel.
+
+Components:
+- **Gateway daemon**: Core process managing connections, routing, and state.
+- **Channel adapters**: Protocol-specific connectors for each messaging platform.
+- **Agent runtime**: Manages the agent loop, tool execution, memory, and sessions.
+- **Nodes**: Mobile companion apps (iOS/Android) that provide camera, screen, location, and voice capabilities.
+- **Control clients**: macOS menu bar app, CLI, web dashboard, Terminal UI.
+
+---
+
+## Messaging channels
+
+OpenClaw supports 20+ messaging channels. Each channel has a dedicated adapter that handles authentication, message formatting, media, and platform-specific features.
+
+**Built-in channels:**
+- WhatsApp (via WhatsApp Web bridge)
+- Telegram (Bot API)
+- Discord (Bot)
+- Slack (App)
+- Signal (signal-cli bridge)
+- iMessage (via BlueBubbles on macOS)
+- WebChat (embeddable web widget)
+
+**Extension channels (plugins):**
+- Microsoft Teams
+- Matrix
+- Mattermost
+- Zalo
+- Voice Call
+- And more via the plugin system
+
+Channel routing allows messages to be directed to specific agents based on the source channel, sender allowlist, or message content.
+
+---
+
+## Model providers
+
+OpenClaw works with 50+ AI model providers through a unified provider interface. Providers include:
+- **OpenAI**: GPT-4o, GPT-5, o1, o3 series
+- **Anthropic**: Claude Sonnet, Opus, Haiku
+- **Google**: Gemini 2.5 Pro, Flash
+- **Ollama**: Self-hosted open models (Llama, Mistral, Qwen, etc.)
+- **Perplexity**: Sonar models with built-in web search (deep research capability)
+- **xAI**: Grok models with real-time web access
+- **Azure OpenAI**, **AWS Bedrock**, **Google Vertex**, **Groq**, **Together AI**, **Fireworks**, **DeepSeek**, **MiniMax**, **Xiaomi**, and many more
+
+Model failover automatically switches to backup providers when the primary model is unavailable. Provider configuration is done in the config file with API keys and model selection.
+
+---
+
+## Agent system
+
+The agent system is the core of OpenClaw. Each agent has:
+- **System prompt**: Defines the agent's personality, knowledge, and behavior rules.
+- **Tools**: Executable capabilities (shell commands, web browser, file operations, etc.).
+- **Memory**: Long-term memory with vector search for recalling past conversations.
+- **Sessions**: Conversation history with automatic compaction to manage context windows.
+- **Skills**: Reusable capability packages installed from ClawHub or created locally.
+
+### Tools
+Built-in tools include:
+- **exec**: Run shell commands with configurable safety levels (sandboxed, elevated).
+- **browser**: Automated web browsing, page reading, form filling, screenshots.
+- **web_search**: Internet search via Perplexity Sonar or Grok web search.
+- **web_fetch**: Fetch and read web pages.
+- **sub-agents**: Spawn specialized sub-agents for parallel task execution.
+- **camera/screen**: Capture images from connected mobile nodes.
+- **voice**: Voice conversation with wake word detection.
+- **cron**: Scheduled task execution.
+- **file operations**: Read, write, edit files in the agent workspace.
+
+### Skills
+Skills are npm packages that extend agent capabilities. They can be installed from ClawHub (community marketplace) or created locally. Skills define custom tools, system prompt additions, and event handlers.
+
+### Multi-agent
+OpenClaw supports routing messages to different agents based on channel, user, or content. Agents can delegate tasks to sub-agents for parallel execution. Each agent maintains its own session and memory.
+
+---
+
+## Memory system
+
+OpenClaw includes a memory system that stores and retrieves information across sessions:
+- **Session memory**: Conversation history within a single session.
+- **Long-term memory**: Vector-indexed memory bank for cross-session recall.
+- **Compaction**: Automatic context window management that summarizes older messages to fit within model token limits.
+- **Session pruning**: Automatic cleanup of old sessions based on age and size.
+
+The memory system uses QMD (Quantum Memory Database) with SQLite + vector extensions for semantic search, with automatic fallback to a built-in index manager.
+
+---
+
+## CLI reference
+
+The `openclaw` CLI provides commands for all gateway operations:
+- `openclaw wizard` — Interactive setup
+- `openclaw gateway run` — Start the gateway daemon
+- `openclaw config set <key> <value>` — Update configuration
+- `openclaw channels status` — Check channel connection status
+- `openclaw message send` — Send messages programmatically
+- `openclaw docs <query>` — Search documentation
+- `openclaw status` — Full system status report
+- `openclaw doctor` — Run diagnostics
+
+Full command reference: https://docs.openclaw.ai/cli
+
+---
+
+## Security model
+
+OpenClaw is designed with security as a top priority:
+- **Self-hosted**: All data stays on your machine.
+- **Sandboxing**: Tool execution can be sandboxed with configurable permission levels.
+- **Allowlists**: Control which users/numbers can interact with the gateway.
+- **External content markers**: Web search and fetch results are marked as untrusted.
+- **Gateway lock**: Optional lock mechanism to prevent unauthorized gateway access.
+- **No cloud dependency**: The gateway runs entirely locally with direct API connections to model providers.
+
+Security documentation: https://docs.openclaw.ai/gateway/security
+
+---
+
+## Platform support
+
+- **macOS**: Native menu bar companion app with voice wake, Canvas, WebChat, and auto-update.
+- **iOS**: Companion node app with camera, screen capture, location, and device actions.
+- **Android**: Companion node app with similar capabilities to iOS.
+- **Linux**: Native CLI and gateway daemon.
+- **Windows**: Runs via WSL2 with full Linux functionality.
+- **Docker**: Containerized deployment with persistent volumes.
+
+---
+
+## Plugin development
+
+OpenClaw uses an npm-based plugin system. Plugins can:
+- Add new messaging channels
+- Add custom tools
+- Extend the agent system
+- Provide new model providers
+
+Plugin development guide: https://docs.openclaw.ai/plugins
+
+---
+
+## Web search and deep research
+
+OpenClaw integrates web search capabilities through:
+- **Perplexity Sonar models**: Built-in web search with `sonar-reasoning-pro` for deep research.
+- **xAI Grok**: Models with real-time web access.
+- **web_search tool**: Dedicated tool for internet search with result synthesis.
+- **web_fetch tool**: Fetch and parse web pages for information extraction.
+- **Browser tool**: Full browser automation for complex web interactions.
+
+---
+
+## API
+
+OpenClaw exposes an OpenAI-compatible HTTP API on the gateway port, allowing integration with any OpenAI-compatible client. WebSocket protocol documentation is available for building custom clients.
+
+API reference: https://docs.openclaw.ai/gateway/openai-http-api
+
+---
+
+## Community and support
+
+- Documentation: https://docs.openclaw.ai
+- GitHub: https://github.com/openclaw/openclaw
+- Discord: https://discord.com/invite/clawd
+- ClawHub (skills): https://clawhub.com
+- Contributing guide: https://github.com/openclaw/openclaw/blob/main/CONTRIBUTING.md
