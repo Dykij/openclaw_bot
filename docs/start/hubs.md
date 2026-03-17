@@ -195,6 +195,7 @@ Use these hubs to discover every page, including deep dives and reference docs t
 
 - [Deep Research на локальной модели](/ru/tools/deep-research-local)
 - [Читаемость документации](/ru/reference/documentation-readability)
+- [Анализ Gemini Deep Research и план улучшений](/ru/reference/gemini-deep-research-analysis)
 
 ## Testing + release
 

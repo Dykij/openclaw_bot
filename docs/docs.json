@@ -2031,6 +2031,10 @@
               {
                 "group": "Документация",
                 "pages": ["ru/reference/documentation-readability"]
+              },
+              {
+                "group": "Анализ и планирование",
+                "pages": ["ru/reference/gemini-deep-research-analysis"]
               }
             ]
           }

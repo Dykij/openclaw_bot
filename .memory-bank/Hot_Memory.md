@@ -19,3 +19,5 @@
 * Внедрён локальный Deep Research через `memory_search` + `memory_get` (полностью офлайн).
 * Документация оптимизирована для AI-поиска: YAML frontmatter, llms.txt, самодостаточные секции.
 * Создана русскоязычная документация: `docs/ru/tools/deep-research-local.md`, `docs/ru/reference/documentation-readability.md`.
+* Выполнен анализ Gemini Deep Research: `docs/ru/reference/gemini-deep-research-analysis.md`.
+* Следующий приоритет: Deep Research Pipeline (Decomposer → Researcher (цикл) → Verifier → Synthesizer) в `src/pipeline_executor.py`.
