@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import structlog
@@ -167,6 +168,43 @@ class OpenClawGateway:
 
         # Background logic
         self._bg_tasks = set()
+
+    # ── Typing indicator helpers ──────────────────────────────────────────
+
+    async def _typing_loop(self, chat_id: int) -> None:
+        """Send 'typing' chat action every 4 s until cancelled.
+
+        Telegram clears the "typing…" indicator after ~5 s, so we must
+        refresh it periodically for long-running operations.
+        """
+        try:
+            while True:
+                try:
+                    await self.bot.send_chat_action(chat_id=chat_id, action="typing")
+                except Exception:
+                    pass  # network blip — silently ignore, keep looping
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass  # normal exit
+
+    @asynccontextmanager
+    async def _typing(self, message: Message):
+        """Async context manager that shows 'Typing…' while the block runs.
+
+        Usage::
+
+            async with self._typing(message):
+                result = await long_running_operation()
+        """
+        task = asyncio.create_task(self._typing_loop(message.chat.id))
+        try:
+            yield
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     async def _scheduled_memory_gc(self):
         """Background task to run Memory GC every 24 hours."""
@@ -415,27 +453,28 @@ class OpenClawGateway:
         )
 
         # Launch pull_and_test.py as subprocess
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "python",
-                "pull_and_test.py",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=".",
-            )
-            stdout, stderr = await process.communicate()
+        async with self._typing(message):
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    "python",
+                    "pull_and_test.py",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=".",
+                )
+                stdout, stderr = await process.communicate()
 
-            if process.returncode == 0:
-                await message.reply(
-                    "✅ VRAM-тест завершён! Результаты отправлены в чат.", parse_mode="Markdown"
-                )
-            else:
-                error = stderr.decode()[:500] if stderr else "Unknown error"
-                await message.reply(
-                    f"❌ Ошибка тестирования:\n```\n{error}\n```", parse_mode="Markdown"
-                )
-        except Exception as e:
-            await message.reply(f"❌ Не удалось запустить тест: `{e}`", parse_mode="Markdown")
+                if process.returncode == 0:
+                    await message.reply(
+                        "✅ VRAM-тест завершён! Результаты отправлены в чат.", parse_mode="Markdown"
+                    )
+                else:
+                    error = stderr.decode()[:500] if stderr else "Unknown error"
+                    await message.reply(
+                        f"❌ Ошибка тестирования:\n```\n{error}\n```", parse_mode="Markdown"
+                    )
+            except Exception as e:
+                await message.reply(f"❌ Не удалось запустить тест: `{e}`", parse_mode="Markdown")
 
     async def cmd_test_all_models(self, message: Message):
         if message.from_user.id != self.admin_id:
@@ -477,22 +516,23 @@ class OpenClawGateway:
             except Exception as e:
                 return f"❌ Error: {e}"
 
-        async with aiohttp.ClientSession() as session:
-            for brigade_name, brigade_info in self.config["brigades"].items():
-                final_report += f"🏴 *Бригада: {brigade_name}*\n"
+        async with self._typing(message):
+            async with aiohttp.ClientSession() as session:
+                for brigade_name, brigade_info in self.config["brigades"].items():
+                    final_report += f"🏴 *Бригада: {brigade_name}*\n"
 
-                # Check models sequence (simulate Task Queue to avoid VRAM Thrashing)
-                for role, data in brigade_info["roles"].items():
-                    sys_prompt = data.get("system_prompt", "Обычный ассистент")
-                    model_name = data.get("model")
+                    # Check models sequence (simulate Task Queue to avoid VRAM Thrashing)
+                    for role, data in brigade_info["roles"].items():
+                        sys_prompt = data.get("system_prompt", "Обычный ассистент")
+                        model_name = data.get("model")
 
-                    # Update status slightly
-                    await self.archivist.send_status(role, model_name, "Пингую vLLM...")
+                        # Update status slightly
+                        await self.archivist.send_status(role, model_name, "Пингую vLLM...")
 
-                    response_text = await fetch_hello(session, role, model_name, sys_prompt)
-                    final_report += f"• `{role}`: {response_text}\n"
+                        response_text = await fetch_hello(session, role, model_name, sys_prompt)
+                        final_report += f"• `{role}`: {response_text}\n"
 
-                final_report += "\n"
+                    final_report += "\n"
 
         # Send final long report using archivist to split correctly
         await self.archivist.send_summary("Результаты тестирования всех ролей", final_report)
@@ -508,52 +548,53 @@ class OpenClawGateway:
         PROMPT_COUNTER.inc()
         status_msg = await message.reply("🖼️ Анализирую изображение через vLLM Vision...")
 
-        try:
-            photo = message.photo[-1]
-            file_info = await self.bot.get_file(photo.file_id)
-            file_bytes = await self.bot.download_file(file_info.file_path)
-            base64_img = base64.b64encode(file_bytes.read()).decode("utf-8")
+        async with self._typing(message):
+            try:
+                photo = message.photo[-1]
+                file_info = await self.bot.get_file(photo.file_id)
+                file_bytes = await self.bot.download_file(file_info.file_path)
+                base64_img = base64.b64encode(file_bytes.read()).decode("utf-8")
 
-            prompt = message.caption or "Опиши это изображение"
+                prompt = message.caption or "Опиши это изображение"
 
-            import aiohttp
+                import aiohttp
 
-            vision_model = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+                vision_model = "meta-llama/Llama-3.2-11B-Vision-Instruct"
 
-            # Ensure vision model is loaded
-            if self.vllm_manager:
-                await self.vllm_manager.ensure_model_loaded(vision_model)
+                # Ensure vision model is loaded
+                if self.vllm_manager:
+                    await self.vllm_manager.ensure_model_loaded(vision_model)
 
-            payload = {
-                "model": vision_model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
-                        ],
-                    }
-                ],
-                "stream": False,
-                "max_tokens": 1024,
-            }
+                payload = {
+                    "model": vision_model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
+                            ],
+                        }
+                    ],
+                    "stream": False,
+                    "max_tokens": 1024,
+                }
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.vllm_url}/chat/completions", json=payload, timeout=60
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        content = data["choices"][0]["message"]["content"].strip()
-                        await status_msg.edit_text(
-                            f"🖼️ *Анализ Vision:*\n\n{content}",
-                            parse_mode="Markdown",
-                        )
-                    else:
-                        await status_msg.edit_text(f"⚠️ Ошибка vLLM Vision ({resp.status})")
-        except Exception as e:
-            await status_msg.edit_text(f"❌ Ошибка обработки фото: {e}")
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{self.vllm_url}/chat/completions", json=payload, timeout=60
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            content = data["choices"][0]["message"]["content"].strip()
+                            await status_msg.edit_text(
+                                f"🖼️ *Анализ Vision:*\n\n{content}",
+                                parse_mode="Markdown",
+                            )
+                        else:
+                            await status_msg.edit_text(f"⚠️ Ошибка vLLM Vision ({resp.status})")
+            except Exception as e:
+                await status_msg.edit_text(f"❌ Ошибка обработки фото: {e}")
 
     async def classify_intent(self, prompt: str) -> str:
         """
@@ -609,8 +650,9 @@ class OpenClawGateway:
         # Try LLM-based classification
         import aiohttp
 
-        # Prefer the dedicated lightweight classification model (7B) so we don't waste
-        # VRAM by loading the heavy 14B reasoning model for a simple 16-token routing decision.
+        # Use the dedicated classification model from model_router config.
+        # Keeping intent routing on its own model avoids loading the heavy
+        # reasoning pipeline just for a simple 16-token routing decision.
         classify_model = (
             self.config.get("system", {}).get("model_router", {}).get("classification")
             or self.config.get("system", {}).get("model_router", {}).get("tool_execution")
@@ -676,7 +718,8 @@ class OpenClawGateway:
         prompt = message.text
         logger.info("received_prompt", prompt=prompt)
         try:
-            await self._handle_prompt_inner(message, prompt)
+            async with self._typing(message):
+                await self._handle_prompt_inner(message, prompt)
         except Exception as exc:
             logger.error("handle_prompt unhandled error", error=str(exc), exc_info=True)
             try:
