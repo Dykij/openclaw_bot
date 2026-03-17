@@ -19,7 +19,7 @@ const DOCS_DIR = join(process.cwd(), "docs");
 const OUTPUT_PATH = join(DOCS_DIR, "llms.txt");
 const DOCS_BASE_URL = "https://docs.openclaw.ai";
 
-const EXCLUDED_DIRS = new Set(["archive", "research", "zh-CN", "ja-JP", ".i18n", "assets", "images"]);
+const EXCLUDED_DIRS = new Set(["archive", "research", "zh-CN", "ja-JP", "ru", ".i18n", "assets", "images"]);
 
 /** @param {string} dir @param {string} base @returns {Array<{path: string, fullPath: string}>} */
 function walkMarkdownFiles(dir, base = dir) {
