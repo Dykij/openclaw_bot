@@ -31,8 +31,8 @@ OpenClaw supports multiple web search providers. Each has different strengths fo
 
 | Provider | Deep research capability | Model | Best for |
 | -------- | ------------------------ | ----- | -------- |
-| **Perplexity** | Native multi-step research | `sonar-reasoning-pro` | Complex questions requiring chain-of-thought analysis |
-| **Perplexity** | Fast Q&A with web context | `sonar-pro` | Research questions needing AI-synthesized answers |
+| **Perplexity (Reasoning)** | Native multi-step research | `sonar-reasoning-pro` | Complex questions requiring chain-of-thought analysis |
+| **Perplexity (Pro)** | Fast Q&A with web context | `sonar-pro` | Research questions needing AI-synthesized answers |
 | **Gemini** | Google Search grounding | `gemini-2.5-flash` | Questions benefiting from Google search coverage |
 | **Grok** | Real-time web search | `grok-4-1-fast` | Time-sensitive research requiring latest information |
 | **Brave** | Traditional web search | N/A (returns raw results) | Structured results when the agent should do its own synthesis |
