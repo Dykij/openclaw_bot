@@ -83,6 +83,7 @@
 - [Skills](https://docs.openclaw.ai/tools/skills): Skill system for extending agent capabilities
 - [ClawHub](https://docs.openclaw.ai/tools/clawhub): Community skills marketplace
 - [Sub-agents](https://docs.openclaw.ai/tools/subagents): Spawning and managing sub-agents
+- [Deep Research](https://docs.openclaw.ai/tools/deep-research): Multi-step internet research with iterative query refinement and synthesis
 - [Cron Jobs](https://docs.openclaw.ai/automation/cron-jobs): Scheduled task automation
 - [Webhooks](https://docs.openclaw.ai/automation/webhook): HTTP webhook ingress
 - [Thinking](https://docs.openclaw.ai/tools/thinking): Extended thinking and verbose reasoning modes

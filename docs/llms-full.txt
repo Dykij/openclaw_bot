@@ -187,12 +187,19 @@ Plugin development guide: https://docs.openclaw.ai/plugins
 
 ## Web search and deep research
 
-OpenClaw integrates web search capabilities through:
-- **Perplexity Sonar models**: Built-in web search with `sonar-reasoning-pro` for deep research.
-- **xAI Grok**: Models with real-time web access.
-- **web_search tool**: Dedicated tool for internet search with result synthesis.
-- **web_fetch tool**: Fetch and parse web pages for information extraction.
-- **Browser tool**: Full browser automation for complex web interactions.
+OpenClaw integrates web search capabilities through multiple providers for both quick lookups and deep multi-step research:
+- **Perplexity Sonar models**: Built-in web search with `sonar-reasoning-pro` for deep research. Uses chain-of-thought reasoning with iterative web search to build comprehensive answers with citations.
+- **Gemini with Google Search grounding**: AI-synthesized answers backed by live Google Search results. Best for queries benefiting from Google search coverage.
+- **xAI Grok**: Models with real-time web access, ideal for time-sensitive research requiring the latest information.
+- **Brave Search**: Traditional structured web search results for when the agent should do its own synthesis.
+- **Kimi by Moonshot**: Native $web_search integration for research with Moonshot models.
+- **web_search tool**: Dedicated tool for internet search with result synthesis across all providers.
+- **web_fetch tool**: Fetch and parse web pages for information extraction. Uses Readability for main-content extraction with Firecrawl fallback.
+- **Browser tool**: Full browser automation for complex web interactions, JavaScript-heavy sites, and logins.
+
+Deep research uses a multi-stage pipeline: query decomposition → parallel web searches → source evaluation → content extraction → cross-referencing → iterative refinement → synthesis with citations. Configure `perplexity/sonar-reasoning-pro` for the most thorough research results.
+
+Deep research guide: https://docs.openclaw.ai/tools/deep-research
 
 ---
 

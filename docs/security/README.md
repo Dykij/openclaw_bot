@@ -1,3 +1,11 @@
+---
+summary: "Security and trust hub with links to the threat model, vulnerability reporting, and security contacts"
+read_when:
+  - You want to report a vulnerability
+  - You need security documentation for OpenClaw
+title: "Security & Trust"
+---
+
 # OpenClaw Security & Trust
 
 **Live:** [trust.openclaw.ai](https://trust.openclaw.ai)

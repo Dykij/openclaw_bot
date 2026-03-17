@@ -119,6 +119,7 @@ Use these hubs to discover every page, including deep dives and reference docs t
 - [Terminal UI](/web/tui)
 - [Browser control](/tools/browser)
 - [Browser (Linux troubleshooting)](/tools/browser-linux-troubleshooting)
+- [Deep research](/tools/deep-research)
 - [Polls](/automation/poll)
 
 ## Nodes, media, voice

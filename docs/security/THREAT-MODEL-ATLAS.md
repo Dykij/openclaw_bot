@@ -1,3 +1,11 @@
+---
+summary: "MITRE ATLAS-based threat model covering adversarial risks to OpenClaw AI agent infrastructure"
+read_when:
+  - Reviewing OpenClaw security posture
+  - Understanding attack vectors against AI agent systems
+title: "Threat Model (ATLAS)"
+---
+
 # OpenClaw Threat Model v1.0
 
 ## MITRE ATLAS Framework

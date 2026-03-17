@@ -1,3 +1,11 @@
+---
+summary: "How to contribute threats, mitigations, and attack chains to the OpenClaw threat model"
+read_when:
+  - You want to report a security concern
+  - You want to add a threat or mitigation to the threat model
+title: "Contributing to the Threat Model"
+---
+
 # Contributing to the OpenClaw Threat Model
 
 Thanks for helping make OpenClaw more secure. This threat model is a living document and we welcome contributions from anyone - you don't need to be a security expert.

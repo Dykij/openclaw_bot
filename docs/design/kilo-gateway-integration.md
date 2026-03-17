@@ -1,3 +1,11 @@
+---
+summary: "Design doc for integrating Kilo Gateway as a first-class OpenAI-compatible provider"
+read_when:
+  - Adding a new provider integration
+  - Understanding how provider adapters are structured
+title: "Kilo Gateway Integration"
+---
+
 # Kilo Gateway Provider Integration Design
 
 ## Overview
