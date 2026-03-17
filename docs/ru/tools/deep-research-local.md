@@ -22,7 +22,7 @@ title: "Deep Research на локальной модели"
 4. **Перекрёстно проверяет** данные из разных источников
 5. **Синтезирует** полный ответ со ссылками на источники
 
-Всё это работает офлайн, на одной GPU (даже на AMD RX 6600 с 8GB VRAM).
+Всё это работает офлайн, на одной GPU (RTX 5060 Ti с 16GB VRAM).
 
 ## Архитектура локального Deep Research
 
@@ -55,9 +55,9 @@ title: "Deep Research на локальной модели"
 # Установить Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Загрузить модель (выберите под вашу VRAM)
-ollama pull qwen2.5-coder:7b    # 4.4GB — хорошо для 8GB VRAM
-ollama pull deepseek-r1:8b      # 4.9GB — reasoning модель
+# Загрузить модель (выберите под вашу задачу — RTX 5060 Ti 16GB вмещает до 14B)
+ollama pull qwen2.5-coder:14b   # ~9GB — основная модель для Deep Research
+ollama pull deepseek-r1:14b     # ~9GB — reasoning модель
 ollama pull llama3.3:8b          # 4.9GB — общего назначения
 ```
 
@@ -67,8 +67,8 @@ ollama pull llama3.3:8b          # 4.9GB — общего назначения
 {
   agents: {
     defaults: {
-      // Основная модель через Ollama
-      model: { primary: "ollama/qwen2.5-coder:7b" },
+      // Основная модель через Ollama (14B модели оптимальны для RTX 5060 Ti 16GB)
+      model: { primary: "ollama/qwen2.5-coder:14b" },
 
       // Память — ключевой компонент Deep Research
       memorySearch: {
@@ -175,7 +175,7 @@ python scripts/doc_ingester.py --url https://docs.openclaw.ai/concepts/memory
 # Отправить исследовательский запрос
 openclaw message send "Проанализируй все настройки memory search
   в конфигурации OpenClaw. Покажи значения по умолчанию, доступные
-  провайдеры эмбеддингов и как оптимизировать для 8GB VRAM."
+  провайдеры эмбеддингов и как оптимизировать для RTX 5060 Ti (16GB VRAM)."
 
 # Поиск по документации
 openclaw docs "memory search configuration"
@@ -195,25 +195,23 @@ openclaw docs "memory search configuration"
 
 ## Оптимизация для ограниченной VRAM
 
-### Управление VRAM на AMD RX 6600 (8GB)
+### Управление VRAM на RTX 5060 Ti (16GB)
 
 ```json5
 {
   agents: {
     defaults: {
       model: {
-        primary: "ollama/qwen2.5-coder:7b",
-        // НЕ загружать модель в VRAM постоянно
-        // OpenClaw отправляет keep_alive=0 после каждого цикла
+        primary: "ollama/qwen2.5-coder:14b",
+        // keep_alive=0 после каждого цикла освобождает VRAM
       },
-      // Уменьшить контекстное окно для экономии VRAM
       memorySearch: {
         chunking: {
-          tokens: 300,   // Меньшие чанки = меньше VRAM
-          overlap: 60,
+          tokens: 400,   // Стандартный размер чанка
+          overlap: 80,
         },
         query: {
-          maxResults: 5,  // Меньше результатов = меньше контекста
+          maxResults: 10,  // 16GB позволяет больше контекста
         },
       },
     },
@@ -225,21 +223,22 @@ openclaw docs "memory search configuration"
 
 | Задача | Рекомендуемая модель | VRAM | Контекст |
 | ------ | -------------------- | ---- | -------- |
-| Анализ кода | `qwen2.5-coder:7b` | ~4.4GB | 32K |
-| Рассуждения и логика | `deepseek-r1:8b` | ~4.9GB | 64K |
+| Deep Research (основная) | `qwen2.5-coder:14b` | ~9GB | 32K |
+| Рассуждения и логика | `deepseek-r1:14b` | ~9GB | 64K |
 | Общие вопросы | `llama3.3:8b` | ~4.9GB | 128K |
+| Анализ кода (лёгкая) | `qwen2.5-coder:7b` | ~4.4GB | 32K |
 | Быстрые ответы | `qwen2.5:1.5b` | ~0.9GB | 32K |
 | Классификация | `qwen2.5:0.5b` | ~0.3GB | 32K |
 
 ### Стратегия переключения моделей
 
-При 8GB VRAM в памяти может находиться только одна модель. Используйте стратегию из Hot Memory:
+При 16GB VRAM можно загрузить одну крупную модель (до ~14B параметров). Для максимальной эффективности используйте стратегию из Hot Memory:
 
 ```
-1. Загрузить основную модель (qwen2.5-coder:7b) для анализа
+1. Загрузить основную модель (qwen2.5-coder:14b) для анализа
 2. Выполнить Deep Research (memory_search → memory_get → синтез)
 3. Выгрузить модель (keep_alive=0)
-4. При необходимости загрузить reasoning модель (deepseek-r1:8b)
+4. При необходимости загрузить reasoning модель (deepseek-r1:14b)
 5. Выполнить перекрёстную проверку результатов
 6. Выгрузить модель
 ```
@@ -375,7 +374,8 @@ systemctl restart ollama
 
 ### Нехватка VRAM
 
-- Используйте модели меньшего размера: `qwen2.5:1.5b` (0.9GB VRAM)
+- На RTX 5060 Ti (16GB) модели до 14B загружаются полностью в VRAM
+- Если загружаете модели >14B — используйте `qwen2.5-coder:7b` или `qwen2.5:1.5b`
 - Установите `keep_alive: 0` для немедленной выгрузки модели
 - Закройте другие GPU-приложения
 

@@ -203,7 +203,7 @@ Deep research guide: https://docs.openclaw.ai/tools/deep-research
 
 ### Local-only deep research
 
-For fully offline research without external APIs, OpenClaw uses the `memory_search` and `memory_get` tools to search and read indexed workspace documents. The local pipeline: decompose question → memory_search per sub-question → memory_get for full file content → cross-reference → synthesize with file path citations. Works with Ollama on any GPU (including 8GB VRAM cards like AMD RX 6600).
+For fully offline research without external APIs, OpenClaw uses the `memory_search` and `memory_get` tools to search and read indexed workspace documents. The local pipeline: decompose question → memory_search per sub-question → memory_get for full file content → cross-reference → synthesize with file path citations. Works with Ollama on any GPU. Hardware baseline: NVIDIA RTX 5060 Ti (16GB VRAM).
 
 Local deep research guide (Russian): https://docs.openclaw.ai/ru/tools/deep-research-local
 

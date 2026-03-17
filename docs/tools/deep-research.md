@@ -220,7 +220,7 @@ python scripts/doc_ingester.py --url https://docs.openclaw.ai/concepts/architect
 
 After indexing, all data is stored locally and available offline.
 
-For the full local-only deep research guide (including VRAM optimization for 8GB GPUs), see the [local deep research guide](/ru/tools/deep-research-local).
+For the full local-only deep research guide (including VRAM optimization for 16GB GPUs), see the [local deep research guide](/ru/tools/deep-research-local).
 
 ## Troubleshooting
 

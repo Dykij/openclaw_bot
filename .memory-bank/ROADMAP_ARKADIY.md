@@ -1,5 +1,5 @@
 # 🧠 ROADMAP ARKADIY — Главный Оркестратор OpenClaw
-> Дата: 2026-03-05 | GPU: AMD RX 6600 (8GB VRAM) | Версия: v2.1
+> Дата: 2026-03-05 | GPU: NVIDIA RTX 5060 Ti (16GB VRAM) | Версия: v2.1
 
 ---
 
