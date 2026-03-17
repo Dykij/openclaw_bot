@@ -30,7 +30,7 @@ Modern AI systems (ChatGPT, Claude, Gemini, Perplexity, Grok) use several method
 
 | Factor | Impact | How OpenClaw addresses it |
 | ------ | ------ | ------------------------- |
-| **Clear heading hierarchy** | H1/H2/H3 help models understand document structure | Consistent Markdown heading structure in all 650+ docs |
+| **Clear heading hierarchy** | H1/H2/H3 help models understand document structure | Consistent Markdown heading structure across all docs |
 | **Frontmatter metadata** | `summary` and `read_when` fields give models quick context | Present on key docs via YAML frontmatter |
 | **Self-contained sections** | Each section should be understandable without reading the whole page | Hub-based organization with focused topic pages |
 | **Code examples** | Models need real, working code to generate accurate answers | Code blocks with language tags throughout |
