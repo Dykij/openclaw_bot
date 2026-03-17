@@ -161,9 +161,66 @@ For time-sensitive research, use the `freshness` parameter:
 OpenClaw can also search its own documentation via the memory search system:
 
 - **`memory_search`** — Semantic search over indexed workspace documents
+- **`memory_get`** — Read specific memory files by path and line range
 - **`openclaw docs <query>`** — Search the live docs.openclaw.ai index
 
 Combine local documentation search with web research for the most complete answers — the agent can verify web findings against local docs, or use local docs as a starting point for web research.
+
+## Local-only deep research (no external APIs)
+
+For fully offline research using only Ollama and local documentation, configure the agent to use `memory_search` and `memory_get` as the primary research tools. This works without any external API keys or internet connection.
+
+### Setup
+
+```json5
+{
+  agents: {
+    defaults: {
+      model: { primary: "ollama/qwen2.5-coder:7b" },
+      memorySearch: {
+        enabled: true,
+        provider: "local",
+        sources: ["memory", "sessions"],
+        query: { maxResults: 10, minScore: 0.3 },
+      },
+    },
+  },
+  models: {
+    providers: {
+      ollama: {
+        apiKey: "ollama-local",
+        baseUrl: "http://127.0.0.1:11434",
+      },
+    },
+  },
+}
+```
+
+### Local research pipeline
+
+The agent follows this pipeline for local-only research:
+
+1. **Decompose** the question into sub-queries
+2. **memory_search** — find relevant chunks across workspace documents
+3. **memory_get** — read full content from the most relevant files
+4. **Cross-reference** data from multiple files
+5. **Synthesize** a comprehensive answer with file path citations
+
+### Prepare your knowledge base
+
+Copy documentation into the agent workspace for indexing:
+
+```bash
+# Copy docs into the agent's memory directory
+cp -r docs/ ~/.openclaw/agents/default/memory/docs/
+
+# Or ingest external pages once (requires internet for download)
+python scripts/doc_ingester.py --url https://docs.openclaw.ai/concepts/architecture
+```
+
+After indexing, all data is stored locally and available offline.
+
+For the full local-only deep research guide (including VRAM optimization for 8GB GPUs), see the [local deep research guide](/ru/tools/deep-research-local).
 
 ## Troubleshooting
 
@@ -193,7 +250,9 @@ Combine local documentation search with web research for the most complete answe
 
 ## Related
 
+- [Local deep research](/ru/tools/deep-research-local) — Fully offline deep research using Ollama and local documentation
 - [Web tools](/tools/web) — Full web_search and web_fetch configuration reference
 - [Browser tool](/tools/browser) — Full web browser automation for JavaScript-heavy sites
 - [AI discoverability](/reference/ai-discoverability) — How to write documentation that AI deep research tools can find and use effectively
+- [Documentation readability](/ru/reference/documentation-readability) — Guide to improving documentation readability for AI and humans
 - [Memory](/concepts/memory) — Local documentation search via the memory system

@@ -191,6 +191,11 @@ Use these hubs to discover every page, including deep dives and reference docs t
 
 - [AI discoverability](/reference/ai-discoverability)
 
+## Russian docs (Документация на русском)
+
+- [Deep Research на локальной модели](/ru/tools/deep-research-local)
+- [Читаемость документации](/ru/reference/documentation-readability)
+
 ## Testing + release
 
 - [Testing](/reference/test)

@@ -131,6 +131,11 @@
 - [Release Checklist](https://docs.openclaw.ai/reference/RELEASING): Release process and checklist
 - [AI Discoverability](https://docs.openclaw.ai/reference/ai-discoverability): How to optimize documentation for AI search and deep research
 
+## Russian docs (Документация на русском)
+
+- [Deep Research на локальной модели](https://docs.openclaw.ai/ru/tools/deep-research-local): Fully offline deep research using Ollama and local documentation (Russian)
+- [Читаемость документации](https://docs.openclaw.ai/ru/reference/documentation-readability): Documentation readability guide for humans and AI models (Russian)
+
 ## Optional
 
 - [OpenProse](https://docs.openclaw.ai/prose): AI writing assistant

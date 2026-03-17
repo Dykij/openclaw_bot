@@ -2012,6 +2012,29 @@
             ]
           }
         ]
+      },
+      {
+        "language": "ru",
+        "tabs": [
+          {
+            "tab": "Инструменты",
+            "groups": [
+              {
+                "group": "Deep Research",
+                "pages": ["ru/tools/deep-research-local"]
+              }
+            ]
+          },
+          {
+            "tab": "Справочник",
+            "groups": [
+              {
+                "group": "Документация",
+                "pages": ["ru/reference/documentation-readability"]
+              }
+            ]
+          }
+        ]
       }
     ]
   }

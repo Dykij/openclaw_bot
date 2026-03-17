@@ -16,3 +16,6 @@
 ## Текущий Контекст
 * Внедряется RAG/MCP архитектура памяти (`.memory-bank/`).
 * Идет настройка изоляции задач Dmarket от задач OpenClaw.
+* Внедрён локальный Deep Research через `memory_search` + `memory_get` (полностью офлайн).
+* Документация оптимизирована для AI-поиска: YAML frontmatter, llms.txt, самодостаточные секции.
+* Создана русскоязычная документация: `docs/ru/tools/deep-research-local.md`, `docs/ru/reference/documentation-readability.md`.
