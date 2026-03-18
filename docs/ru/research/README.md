@@ -32,6 +32,19 @@
   - ⚡ Новые скиллы (5): WASM sandbox, GPU monitor, backup, multi-agent protocol, self-healing
 - **[Детальный анализ (папка)](devops/)** — JSON и markdown файлы с полным анализом
 
+## Тестирование: 40 улучшений (10 с каждого сайта)
+
+- **[🧪 40 улучшений тестирования](testing/testing-improvements-40.md)** — Список из 40 улучшений по 4 источникам:
+  - 🔬 Semantic Scholar (10): Property-based, chaos, fuzz, snapshot, contract, load, regression, mutation, concurrency, reproducibility
+  - 💻 Papers With Code (10): AI test gen, integration, differential, adversarial, VRAM profiling, API, data pipeline, canary, benchmark, CI
+  - 📄 arXiv (10): ReAct gen, safety alignment, stress, LoRA regression, hallucination, red team, reproducibility, GPU scheduling, boundary, tracing
+  - 🤗 HuggingFace Papers (10): AgentBench, A/B, golden dataset, red team, latency SLO, container, rollback, model switch, privilege, monitoring
+- **[Детальный анализ (папка)](testing/)** — JSON и markdown файлы
+
+## 📋 Полный список: 60 улучшений (DevOps + Тестирование)
+
+- **[📋 Все 60 улучшений с детальными пояснениями](all-improvements-60.md)** — Объединённый документ с подробным описанием каждого улучшения и его практического влияния на OpenClaw Bot
+
 ## Как использовать
 
 1. **Навигация** — Перейдите в папку нужного источника для полного списка статей.
