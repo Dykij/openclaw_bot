@@ -1,5 +1,5 @@
 # 🧠 ROADMAP ARKADIY — Главный Оркестратор OpenClaw
-> Дата: 2026-03-05 | GPU: AMD RX 6600 (8GB VRAM) | Версия: v2.1
+> Дата: 2026-03-18 | GPU: NVIDIA RTX 5060 Ti (16GB VRAM) | Версия: v2.2
 
 ---
 
@@ -43,13 +43,52 @@
 
 ---
 
+## 🟡 Приоритет: ВАЖНЫЙ (NEW — AlphaXiv Research)
+
+### 7. Structured Interaction Logging (JSONL)
+**Файл:** `src/interaction_logger.py` (НОВЫЙ)
+**Проблема:** Взаимодействия бригад не сохраняются в формате, пригодном для обучения.
+**Решение:** JSONL-логи пар (action, next_state, user_correction) для всех MCP tool calls.
+**Источник:** OpenClaw-RL (arXiv:2603.10165) — unified interaction signals.
+**VRAM:** 0 ГБ | **Статус:** 🟡 Запланировано
+
+### 8. GRPO Training Pipeline (LoRA + Unsloth)
+**Файл:** `src/grpo_trainer.py` (НОВЫЙ)
+**Проблема:** Модели используются as-is, без адаптации к нашим задачам.
+**Решение:** GRPO + LoRA 4-bit через Unsloth для дообучения Qwen-Coder-7B на корпусе tool calls.
+**Источник:** arXiv:2503.16219 (GRPO for Small LLMs), Unsloth toolkit.
+**VRAM:** 8–14 ГБ | **Статус:** 🟡 Запланировано
+
+### 9. Reward Verifier (RLVR)
+**Файл:** `src/reward_verifier.py` (НОВЫЙ)
+**Проблема:** Нет автоматической метрики качества ответов агентов.
+**Решение:** Верифицируемые rewards: JSON-валидность, HTTP status, SQL-результаты, lint pass.
+**Источник:** DeepSeek-R1 (arXiv:2501.12948) — RLVR concept.
+**VRAM:** 0 ГБ | **Статус:** 🟡 Запланировано
+
+> 📚 Полный анализ: `docs/ru/reference/alphaxiv-model-training-analysis.md`
+
+---
+
 ## 🟢 Приоритет: БЭКЛОГ
 
-### 7. Auto-scaling Context Window
+### 10. Auto-scaling Context Window
 Динамическая подстройка `num_ctx` в зависимости от сложности задачи.
 
-### 8. Multi-modal Input (Images)
+### 11. Multi-modal Input (Images)
 Поддержка Telegram-фото через vision-модели (LLaVA).
 
-### 9. Prometheus Metrics Export
+### 12. Prometheus Metrics Export
 Экспорт метрик для Grafana-дашборда.
+
+### 13. PRM Judge (Process Reward Model)
+Маленькая модель-судья (Qwen-1.5B) для real-time оценки качества ответов.
+**Источник:** OpenClaw-RL (arXiv:2603.10165). **VRAM:** 2 ГБ.
+
+### 14. OPD Pipeline (On-Policy Distillation)
+Hindsight-Guided distillation из пользовательских правок для персонализации.
+**Источник:** OpenClaw-RL (arXiv:2603.10165). **VRAM:** 14 ГБ.
+
+### 15. Memento Episode Memory
+Эпизодическая память успешных траекторий (без GPU). Расширение memory_gc.py.
+**Источник:** arXiv:2508.16153.
