@@ -44,6 +44,7 @@ import math
 import os
 import random
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -76,7 +77,7 @@ class Experience:
     access_count: int = 0
     was_corrected: bool = False
     correction_of: Optional[str] = None  # ID of the experience this corrects
-    experience_id: str = field(default_factory=lambda: f"exp_{int(time.time() * 1000)}_{random.randint(0, 9999):04d}")
+    experience_id: str = field(default_factory=lambda: f"exp_{uuid.uuid4().hex[:16]}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary for JSONL storage."""
