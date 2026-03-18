@@ -1,0 +1,223 @@
+services:
+  # --- DATA LAYER ---
+  questdb:
+    image: questdb/questdb:latest
+    container_name: questdb_timeseries
+    networks:
+      - bot_internal
+    ports:
+      - "127.0.0.1:9000:9000" # REST API (Local only)
+      - "127.0.0.1:9009:9009" # ILP TCP (Local only)
+    volumes:
+      - questdb_data:/var/lib/questdb
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    container_name: redis_state
+    networks:
+      - bot_internal
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+
+  # --- ALERTING (READ-ONLY) ---
+  telegram_observer:
+    build: .
+    command: /opt/venv/bin/python3 src/alerting/telegram_bot.py
+    container_name: alerting_node
+    networks:
+      - bot_internal
+      - public_internet
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}
+      - RUNNING_IN_DOCKER=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  # --- OBSERVABILITY DASHBOARDS ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus_scraper
+    volumes:
+      - ./grafana/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - bot_internal # Strict Zero-Trust Pull. NO isolated_grpc access.
+    depends_on:
+      - telemetry_api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana_dashboards
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - bot_internal
+    depends_on:
+      - prometheus
+      - questdb
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+
+  # --- INGESTION BOUNDARY ---
+  dmarket_ingestion:
+    build: .
+    command: /opt/venv/bin/python3 src/ingestion/dmarket_ws.py
+    container_name: ingest_dmarket
+    networks:
+      - bot_internal
+      - public_internet # Needs outside access to DMarket WS
+    depends_on:
+      - redis
+      - questdb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  # --- ZERO-TRUST ISOLATED SIGNER ---
+  signer_service:
+    build: .
+    command: /opt/venv/bin/python3 src/signer_service/main.py
+    container_name: isolated_trade_signer
+    runtime: runsc
+    networks:
+      - isolated_grpc
+      - public_internet # Needs minimal outside access to reach actual exchanges with signed payloads. Alternatively, a proxy container could be used.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - DOPPLER_TOKEN=${DOPPLER_TOKEN:-sandbox_token}
+      - PAPER_TRADE_MODE=True
+      - LOG_LEVEL=DEBUG
+      - RUNNING_IN_DOCKER=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Notice: NO PORTS EXPOSED to host
+    restart: on-failure
+
+  # --- CORE ALGORITHMIC ENGINES (GPU PASSTHROUGH) ---
+  main_trading_engines:
+    build: .
+    # Starts trade_gate, markov_model, scanner_v3 logic
+    command: /opt/venv/bin/python3 src/main.py 
+    container_name: openclaw_factory
+    runtime: runsc
+    networks:
+      - bot_internal
+      - public_internet
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu] # Exposes Blackwell / RTX 5060 Ti
+    environment:
+      - PAPER_TRADE_MODE=True
+      - LOG_LEVEL=DEBUG
+      - RUNNING_IN_DOCKER=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  # --- OBSERVABILITY ---
+  telemetry_api:
+    build: .
+    command: /opt/venv/bin/python3 src/telemetry.py
+    container_name: prometheus_telemetry
+    networks:
+      - bot_internal
+    ports:
+      - "0.0.0.0:9090:9090" # Expose metrics to external Prometheus scrapers
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: always
+
+networks:
+  public_internet:
+    driver: bridge
+  bot_internal:
+    driver: bridge
+    internal: true # No outside world access (except mapped ports)
+  isolated_grpc:
+    driver: bridge
+    internal: true # Air-gapped network for gRPC IPC
+
+volumes:
+  questdb_data:

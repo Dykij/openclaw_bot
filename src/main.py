@@ -1,11 +1,7 @@
 import asyncio
 import atexit
-import base64
 import json
-import logging
 import os
-import re
-import subprocess
 import sys
 import time
 from typing import Optional
@@ -15,10 +11,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import (
     BotCommand,
-    CallbackQuery,
     ForceReply,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Message,
 )
 from prometheus_client import Counter, Gauge, start_http_server
@@ -26,6 +19,19 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from src.archivist_telegram import TelegramArchivist
+from src.gateway_commands import (
+    cmd_help,
+    cmd_models,
+    cmd_research,
+    cmd_start,
+    cmd_status,
+    cmd_test,
+    cmd_test_all_models,
+    handle_callback_query,
+    handle_photo,
+    handle_unknown_command,
+)
+from src.intent_classifier import classify_intent
 from src.memory_gc import MemoryGarbageCollector
 from src.pipeline_executor import PipelineExecutor
 
@@ -147,23 +153,24 @@ class OpenClawGateway:
         except Exception as e:
             logger.error(f"Failed to start Prometheus server: {e}")
 
-        # Register Handlers
-        self.dp.message.register(self.cmd_start, Command("start"))
-        self.dp.message.register(self.cmd_help, Command("help"))
-        self.dp.message.register(self.cmd_status, Command("status"))
-        self.dp.message.register(self.cmd_models, Command("models"))
-        self.dp.message.register(self.cmd_test, Command("test"))
-        self.dp.message.register(self.cmd_test_all_models, Command("test_all_models"))
-        self.dp.message.register(self.handle_photo, F.photo)
+        # Register Handlers (delegating to gateway_commands module)
+        self.dp.message.register(lambda m: cmd_start(self, m), Command("start"))
+        self.dp.message.register(lambda m: cmd_help(self, m), Command("help"))
+        self.dp.message.register(lambda m: cmd_status(self, m), Command("status"))
+        self.dp.message.register(lambda m: cmd_models(self, m), Command("models"))
+        self.dp.message.register(lambda m: cmd_test(self, m), Command("test"))
+        self.dp.message.register(lambda m: cmd_test_all_models(self, m), Command("test_all_models"))
+        self.dp.message.register(lambda m: cmd_research(self, m), Command("research"))
+        self.dp.message.register(lambda m: handle_photo(self, m), F.photo)
         
         # Заглушка для неизвестных команд
-        self.dp.message.register(self.handle_unknown_command, F.text.startswith('/'))
+        self.dp.message.register(lambda m: handle_unknown_command(self, m), F.text.startswith('/'))
         
         # Перехват только текста, который НЕ является командой
         self.dp.message.register(self.handle_prompt, F.text & ~F.text.startswith('/'))
         
         # Callback query handler for inline buttons
-        self.dp.callback_query.register(self.handle_callback_query)
+        self.dp.callback_query.register(lambda cb: handle_callback_query(self, cb))
 
         # Background logic
         self._bg_tasks = set()
@@ -252,116 +259,6 @@ class OpenClawGateway:
                     logger.debug("Polling Gateway Error", error=str(e))
                     await asyncio.sleep(interval * 2)
 
-    async def handle_callback_query(self, callback: CallbackQuery):
-        """Handle inline button presses."""
-        if callback.from_user.id != self.admin_id:
-            await callback.answer("⛔ Access Denied.")
-            return
-            
-        action = callback.data
-        if action == "cmd_status":
-            await self.cmd_status(callback.message, from_callback=True)
-            await callback.answer()
-        elif action == "cmd_models":
-            await self.cmd_models(callback.message, from_callback=True)
-            await callback.answer()
-        elif action == "cmd_test":
-            await callback.answer("Запускаю VRAM тест...")
-            await self.cmd_test(callback.message)
-        else:
-            await callback.answer()
-
-    async def handle_unknown_command(self, message: Message):
-        """Ignore or warn about unknown Telegram menu commands."""
-        if message.from_user.id != self.admin_id:
-            return
-        await message.reply("⚠️ Неизвестная команда. Если это кнопка из меню, убедитесь, что она реализована.")
-
-    async def cmd_help(self, message: Message):
-        if message.from_user.id != self.admin_id:
-            await message.reply("⛔ Access Denied.")
-            return
-        help_text = (
-            "🦞 *OpenClaw — Список команд:*\n\n"
-            "/start — Главное меню с кнопками\n"
-            "/help — Эта справка\n"
-            "/status — Статус системы (vLLM, GPU, бригады)\n"
-            "/models — Список моделей по бригадам\n"
-            "/test — Запустить VRAM-тест\n"
-            "/test_all_models — Тест всех 20 ролей (10-20 мин)\n\n"
-            "💬 *Текстовый запрос* — автоматически маршрутизируется\n"
-            "в бригаду Dmarket или OpenClaw через Intent Classifier."
-        )
-        await message.reply(help_text, parse_mode="Markdown")
-
-    async def cmd_start(self, message: Message):
-        if message.from_user.id != self.admin_id:
-            await message.reply("⛔ Access Denied. Locked to Admin.")
-            return
-            
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Статус Системы", callback_data="cmd_status")],
-            [InlineKeyboardButton(text="🧠 Список Моделей", callback_data="cmd_models")],
-            [InlineKeyboardButton(text="🔬 VRAM Тест", callback_data="cmd_test")]
-        ])
-            
-        await message.reply(
-            "🦞 *OpenClaw v2026: Dual-Brigade Online*\n\n"
-            f"🛠️ GPU: {self.config['system']['hardware']['target_gpu']}\n"
-            f"🧠 Модели: Llama-3.1-8B / DeepSeek-R1-8B / Gemma-3-12B / Qwen2.5-Coder-7B\n"
-            f"📡 vLLM: `{self.vllm_url}`\n\n"
-            "Выбери нужный раздел меню ниже или отправь задачу текстом для роутинга в бригаду.",
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-
-    async def cmd_status(self, message: Message, from_callback: bool = False):
-        if message.from_user.id != self.admin_id:
-            return
-
-        # Check vLLM connectivity
-        import aiohttp
-
-        vllm_status = "❌ Недоступен"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.vllm_url}/models", timeout=aiohttp.ClientTimeout(total=5)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        model_count = len(data.get("data", []))
-                        vllm_status = f"✅ Online ({model_count} моделей)"
-                    else:
-                        vllm_status = f"⚠️ HTTP {resp.status}"
-        except Exception:
-            pass
-
-        # Count roles
-        total_roles = sum(len(brigade["roles"]) for brigade in self.config["brigades"].values())
-
-        status_msg = (
-            f"🛠️ *System Status:*\n\n"
-            f"📦 Framework: `{self.config['system']['framework']}` v{self.config['system']['version']}\n"
-            f"🎮 GPU: `{self.config['system']['hardware']['target_gpu']}`\n"
-            f"💾 VRAM: {self.config['system']['hardware']['vram_limit_gb']}GB\n"
-            f"📡 vLLM: `{self.vllm_url}` — {vllm_status}\n"
-            f"🏴 Бригады: Dmarket + OpenClaw ({total_roles} ролей)\n"
-            f"🧠 Inference: {self.config['system']['hardware']['inference_engine']}"
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Обновить статус", callback_data="cmd_status")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="cmd_models")] 
-        ])
-
-        if from_callback:
-            try:
-                await message.edit_text(status_msg, parse_mode="Markdown", reply_markup=keyboard)
-            except Exception:
-                pass # Message is not modified
-        else:
-            await message.reply(status_msg, parse_mode="Markdown", reply_markup=keyboard)
-
     async def reload_config(self):
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
@@ -375,297 +272,6 @@ class OpenClawGateway:
         # Placeholder: returns empty list (models fetched at runtime via NGC API)
         return []
 
-    async def cmd_models(self, message: Message, from_callback: bool = False):
-        if message.from_user.id != self.admin_id and not from_callback:
-            return
-
-        models_msg = "🧠 *Модели по бригадам:*\n\n"
-        for brigade_name, brigade_info in self.config["brigades"].items():
-            models_msg += f"🏴 *{brigade_name}:*\n"
-            for role, data in brigade_info["roles"].items():
-                models_msg += f"  • `{role}` → `{data['model']}`\n"
-            models_msg += "\n"
-
-        # Count unique models
-        all_models = set()
-        for brigade_info in self.config["brigades"].values():
-            for data in brigade_info["roles"].values():
-                all_models.add(data["model"])
-        models_msg += f"📊 *Уникальных моделей:* {len(all_models)}"
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Статус системы", callback_data="cmd_status")]
-        ])
-
-        if from_callback:
-            try:
-                await message.edit_text(models_msg, parse_mode="Markdown", reply_markup=keyboard)
-            except Exception:
-                pass
-        else:
-            await message.reply(models_msg, parse_mode="Markdown", reply_markup=keyboard)
-
-    async def cmd_test(self, message: Message):
-        if message.from_user.id != self.admin_id:
-            return
-
-        await message.reply(
-            "🔬 Запускаю VRAM-тестирование всех моделей...\nЭто может занять 10-20 минут.",
-            parse_mode="Markdown",
-        )
-
-        # Launch pull_and_test.py as subprocess
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "python",
-                "pull_and_test.py",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=".",
-            )
-            stdout, stderr = await process.communicate()
-
-            if process.returncode == 0:
-                await message.reply(
-                    "✅ VRAM-тест завершён! Результаты отправлены в чат.", parse_mode="Markdown"
-                )
-            else:
-                error = stderr.decode()[:500] if stderr else "Unknown error"
-                await message.reply(
-                    f"❌ Ошибка тестирования:\n```\n{error}\n```", parse_mode="Markdown"
-                )
-        except Exception as e:
-            await message.reply(f"❌ Не удалось запустить тест: `{e}`", parse_mode="Markdown")
-
-    async def cmd_test_all_models(self, message: Message):
-        if message.from_user.id != self.admin_id:
-            return
-
-        status_msg = await message.reply(
-            "🚀 *Начинаю тестирование 20 моделей!*\n\nКаждая из ролей сейчас пройдет проверку отклика, чтобы подтвердить свои эмоции и характер. Ожидайте...",
-            parse_mode="Markdown",
-        )
-
-        import aiohttp
-
-        final_report = "📊 *Отчет: Парад Планет (20 Ролей)*\n\n"
-
-        async def fetch_hello(session, role_name, model_name, sys_prompt):
-            payload = {
-                "model": model_name,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"{sys_prompt}. Представься одним коротким предложением (максимум 5-7 слов), используя свои эмодзи.",
-                    },
-                    {"role": "user", "content": "Привет, проверка связи!"},
-                ],
-                "stream": False,
-                "max_tokens": 128,
-            }
-            headers = {}
-            try:
-                timeout = aiohttp.ClientTimeout(total=30)
-                async with session.post(
-                    f"{self.vllm_url}/chat/completions", json=payload, timeout=timeout
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data["choices"][0]["message"]["content"].strip().replace("\n", " ")
-                    else:
-                        return f"⚠️ Ошибка vLLM ({resp.status})"
-            except Exception as e:
-                return f"❌ Error: {e}"
-
-        async with aiohttp.ClientSession() as session:
-            for brigade_name, brigade_info in self.config["brigades"].items():
-                final_report += f"🏴 *Бригада: {brigade_name}*\n"
-
-                # Check models sequence (simulate Task Queue to avoid VRAM Thrashing)
-                for role, data in brigade_info["roles"].items():
-                    sys_prompt = data.get("system_prompt", "Обычный ассистент")
-                    model_name = data.get("model")
-
-                    # Update status slightly
-                    await self.archivist.send_status(role, model_name, "Пингую vLLM...")
-
-                    response_text = await fetch_hello(session, role, model_name, sys_prompt)
-                    final_report += f"• `{role}`: {response_text}\n"
-
-                final_report += "\n"
-
-        # Send final long report using archivist to split correctly
-        await self.archivist.send_summary("Результаты тестирования всех ролей", final_report)
-        await status_msg.edit_text(
-            "✅ *Тестирование завершено!*\nВсе данные отправлены.", parse_mode="Markdown"
-        )
-
-    async def handle_photo(self, message: Message):
-        """Handle image inputs via vLLM vision model."""
-        if message.from_user.id != self.admin_id:
-            return
-
-        PROMPT_COUNTER.inc()
-        status_msg = await message.reply("🖼️ Анализирую изображение через vLLM Vision...")
-
-        try:
-            photo = message.photo[-1]
-            file_info = await self.bot.get_file(photo.file_id)
-            file_bytes = await self.bot.download_file(file_info.file_path)
-            base64_img = base64.b64encode(file_bytes.read()).decode("utf-8")
-
-            prompt = message.caption or "Опиши это изображение"
-
-            import aiohttp
-
-            vision_model = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-
-            # Ensure vision model is loaded
-            if self.vllm_manager:
-                await self.vllm_manager.ensure_model_loaded(vision_model)
-
-            payload = {
-                "model": vision_model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
-                        ],
-                    }
-                ],
-                "stream": False,
-                "max_tokens": 1024,
-            }
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.vllm_url}/chat/completions", json=payload, timeout=60
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        content = data["choices"][0]["message"]["content"].strip()
-                        await status_msg.edit_text(
-                            f"🖼️ *Анализ Vision:*\n\n{content}",
-                            parse_mode="Markdown",
-                        )
-                    else:
-                        await status_msg.edit_text(f"⚠️ Ошибка vLLM Vision ({resp.status})")
-        except Exception as e:
-            await status_msg.edit_text(f"❌ Ошибка обработки фото: {e}")
-
-    async def classify_intent(self, prompt: str) -> str:
-        """
-        LLM-based intent classification.
-        Uses model from config (model_router.risk_analysis) for routing.
-        Falls back to keyword matching if vLLM is unavailable.
-        """
-        # Check cache first (capped at 500 entries to prevent memory leak)
-        cache_key = prompt.lower().strip()[:100]
-        if cache_key in self._intent_cache:
-            return self._intent_cache[cache_key]
-        if len(self._intent_cache) >= 500:
-            # evict oldest half
-            keys_to_drop = list(self._intent_cache.keys())[:250]
-            for k in keys_to_drop:
-                del self._intent_cache[k]
-
-        # Keyword fallback (always available)
-        dmarket_keywords = [
-            "buy",
-            "sell",
-            "dmarket",
-            "trade",
-            "price",
-            "hft",
-            "arbitrage",
-            "купить",
-            "продать",
-            "торговля",
-            "цена",
-            "арбитраж",
-            "дмаркет",
-            "скин",
-            "инвентарь",
-            "skin",
-            "inventory",
-            "target",
-            "spread",
-        ]
-        openclaw_keywords = [
-            "config", "конфиг", "pipeline", "модел", "model", "vllm",
-            "бригад", "brigade", "роль", "role", "mcp", "плагин", "plugin",
-            "бот", "bot", "openclaw", "gateway", "память", "memory",
-        ]
-        lower_prompt = prompt.lower()
-        if any(kw in lower_prompt for kw in dmarket_keywords):
-            keyword_result = "Dmarket"
-        elif any(kw in lower_prompt for kw in openclaw_keywords):
-            keyword_result = "OpenClaw"
-        else:
-            keyword_result = "General"
-
-        # Try LLM-based classification
-        import aiohttp
-
-        # Use model from config; fall back to first available role model
-        classify_model = (
-            self.config.get("system", {}).get("model_router", {}).get("risk_analysis")
-            or next(
-                (
-                    d["model"]
-                    for brigade in self.config.get("brigades", {}).values()
-                    for d in brigade.get("roles", {}).values()
-                ),
-                "llama3.2",
-            )
-        )
-
-        try:
-            brigades = list(self.config.get("brigades", {}).keys())
-            all_classes = brigades + ["General"]
-            classify_prompt = (
-                f"Classify this user request into ONE of these categories: {', '.join(all_classes)}.\n"
-                f"Dmarket = trading, buying, selling items, prices, market, skins, inventory.\n"
-                f"OpenClaw = system administration, framework, configuration, models, bots, pipeline.\n"
-                f"General = general questions, chitchat, greetings, unrelated topics, unclear intent.\n\n"
-                f"Request: {prompt}\n\n"
-                f"Reply with ONLY the category name, nothing else."
-            )
-            payload = {
-                "model": classify_model,
-                "messages": [{"role": "user", "content": classify_prompt}],
-                "stream": False,
-                "max_tokens": 16,
-            }
-            async with aiohttp.ClientSession() as session:
-                timeout = aiohttp.ClientTimeout(total=10)
-                async with session.post(
-                    f"{self.vllm_url}/chat/completions", json=payload, timeout=timeout
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        result = data["choices"][0]["message"]["content"].strip()
-                        # Validate response is a known brigade or General
-                        for b in all_classes:
-                            if b.lower() in result.lower():
-                                # Map General → OpenClaw (uses shorter Planner-only chain)
-                                resolved = "OpenClaw" if b == "General" else b
-                                self._intent_cache[cache_key] = resolved
-                                logger.info(
-                                    "Intent classified by LLM", brigade=resolved, raw_class=b, raw_response=result
-                                )
-                                return resolved
-        except Exception as e:
-            logger.warning("LLM intent classification failed, using keyword fallback", error=str(e))
-
-        # Fallback to keyword result (General → OpenClaw)
-        resolved_fallback = "OpenClaw" if keyword_result == "General" else keyword_result
-        self._intent_cache[cache_key] = resolved_fallback
-        logger.info("Intent classified by keywords", brigade=resolved_fallback, keyword_class=keyword_result)
-        return resolved_fallback
-
     async def handle_prompt(self, message: Message):
         if message.from_user.id != self.admin_id:
             return
@@ -673,6 +279,10 @@ class OpenClawGateway:
         PROMPT_COUNTER.inc()
         prompt = message.text
         logger.info("received_prompt", prompt=prompt)
+        try:
+            await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        except Exception:
+            pass
         try:
             await self._handle_prompt_inner(message, prompt)
         except Exception as exc:
@@ -711,22 +321,27 @@ class OpenClawGateway:
 
         # 1. Intent Classification (LLM-based with keyword fallback)
         if not is_reply:
-            brigade = await self.classify_intent(prompt)
+            brigade = await classify_intent(self, prompt)
 
-        _b = self.archivist.escape_markdown(brigade)
+        # 2. Execute Pipeline (Chain-of-Agents) or Fast Path (single model)
+        is_fast_path = (brigade == "General")
+        actual_brigade = "OpenClaw" if is_fast_path else brigade
+
+        route_label = f"{actual_brigade} ⚡" if is_fast_path else actual_brigade
+        _b = self.archivist.escape_markdown(route_label)
         status_msg = await message.reply(
             f"🤖 *Pipeline \\({_b}\\)* запущен\\.\\.\\.\n_Маршрутизация задачи в бригаду\\.\\.\\._",
             parse_mode="MarkdownV2",
         )
 
         await self.archivist.send_status(
-            f"Router ({brigade})", "Intent Classification", f"Задача направлена в бригаду {brigade}"
+            f"Router ({actual_brigade})", "Intent Classification",
+            f"Задача направлена в бригаду {actual_brigade}" + (" (fast path)" if is_fast_path else "")
         )
 
-        # 2. Execute Pipeline (Chain-of-Agents)
         async def update_status(role, model, text):
             try:
-                b = self.archivist.escape_markdown(brigade)
+                b = self.archivist.escape_markdown(actual_brigade)
                 r = self.archivist.escape_markdown(role)
                 m = self.archivist.escape_markdown(model)
                 t = self.archivist.escape_markdown(text)
@@ -736,20 +351,43 @@ class OpenClawGateway:
             except Exception:
                 pass  # Telegram rate limit on edits
 
-        result = await self.pipeline.execute(
-            prompt=prompt,
-            brigade=brigade,
-            status_callback=update_status,
-        )
+        # Periodic typing indicator (Telegram resets after ~5s)
+        typing_active = True
+        async def _keep_typing():
+            while typing_active:
+                try:
+                    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                except Exception:
+                    pass
+                await asyncio.sleep(4)
+        typing_task = asyncio.create_task(_keep_typing())
+
+        try:
+            result = await self.pipeline.execute_stream(
+                prompt=prompt,
+                brigade=actual_brigade,
+                status_callback=update_status,
+                task_type="general" if is_fast_path else None,
+            )
+        finally:
+            typing_active = False
+            typing_task.cancel()
 
         # Phase 3.4: Self-Healing Logic (One-time retry on failure)
         if result.get("status") == "error":
-            logger.warning("Pipeline execution failed. Attempting self-healing retry...", brigade=brigade)
-            result = await self.pipeline.execute(
-                prompt=prompt,
-                brigade=brigade,
-                status_callback=update_status,
-            )
+            logger.warning("Pipeline execution failed. Attempting self-healing retry...", brigade=actual_brigade)
+            typing_active = True
+            typing_task = asyncio.create_task(_keep_typing())
+            try:
+                result = await self.pipeline.execute_stream(
+                    prompt=prompt,
+                    brigade=actual_brigade,
+                    status_callback=update_status,
+                    task_type="general" if is_fast_path else None,
+                )
+            finally:
+                typing_active = False
+                typing_task.cancel()
 
         if result.get("status") == "ask_user":
             question = result.get("question", "Оркестратору нужно уточнение.")
@@ -758,7 +396,7 @@ class OpenClawGateway:
                 
             self.pending_ask_user[message.from_user.id] = {
                 "original_prompt": prompt,
-                "brigade": brigade
+                "brigade": actual_brigade
             }
             
             markup = ForceReply(selective=True)
@@ -776,35 +414,76 @@ class OpenClawGateway:
                 )
                 
             await self.archivist.send_status(
-                f"Router ({brigade})", "Clarification Loop", "Пайплайн приостановлен. Ожидается ответ пользователя."
+                f"Router ({actual_brigade})", "Clarification Loop", "Пайплайн приостановлен. Ожидается ответ пользователя."
             )
             return
 
         llm_response = result["final_response"]
         chain_str = " → ".join(result["chain_executed"])
+        display_brigade = f"{actual_brigade} ⚡" if is_fast_path else actual_brigade
 
-        # 3. Send final response to User
-        try:
-            await status_msg.edit_text(
-                f"🏴 *Бригада:* {brigade} | *Pipeline:* `{chain_str}`\n\n{llm_response}",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            # Markdown parse error fallback
-            await status_msg.edit_text(
-                f"🏴 Бригада: {brigade} | Pipeline: {chain_str}\n\n{llm_response}"
-            )
+        # 3. Send final response with progressive streaming edits
+        stream = result.get("stream")
+        if stream:
+            accumulated = ""
+            header = f"🏴 *Бригада:* {display_brigade} | *Pipeline:* `{chain_str}`\n\n"
+            last_edit_time = 0
+            try:
+                async for chunk in stream:
+                    accumulated += chunk
+                    now = time.time()
+                    # Edit message no more than once per second (Telegram rate limit)
+                    if now - last_edit_time >= 1.0:
+                        try:
+                            await status_msg.edit_text(header + accumulated + "▌", parse_mode="Markdown")
+                        except Exception:
+                            try:
+                                await status_msg.edit_text(
+                                    f"🏴 Бригада: {display_brigade} | Pipeline: {chain_str}\n\n{accumulated}▌"
+                                )
+                            except Exception:
+                                pass
+                        last_edit_time = now
+            except Exception as e:
+                logger.warning("Stream interrupted", error=str(e))
+
+            # Final edit without cursor
+            try:
+                await status_msg.edit_text(header + accumulated, parse_mode="Markdown")
+            except Exception:
+                await status_msg.edit_text(
+                    f"🏴 Бригада: {display_brigade} | Pipeline: {chain_str}\n\n{accumulated}"
+                )
+        else:
+            try:
+                await status_msg.edit_text(
+                    f"🏴 *Бригада:* {display_brigade} | *Pipeline:* `{chain_str}`\n\n{llm_response}",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                await status_msg.edit_text(
+                    f"🏴 Бригада: {display_brigade} | Pipeline: {chain_str}\n\n{llm_response}"
+                )
 
         # 4. Final Report (для логов Архивариуса)
-        roles = list(self.config["brigades"][brigade]["roles"].keys())
+        roles = list(self.config["brigades"][actual_brigade]["roles"].keys())
         await self.archivist.send_summary(
-            f"Pipeline завершён ({brigade})",
+            f"Pipeline завершён ({actual_brigade})",
             f"Промпт: {prompt}\n\n"
             f"*Pipeline:* {chain_str}\n"
             f"*Ответ:* {llm_response}\n\n"
-            f"*Бригада:* {brigade} (Ролей: {len(roles)})\n"
+            f"*Бригада:* {actual_brigade} (Ролей: {len(roles)})\n"
             f"*GC Stats:* {self.memory_gc.get_stats()}",
         )
+
+    async def _preload_model(self, model_name: str):
+        """Pre-load default vLLM model at startup to avoid cold start delays."""
+        try:
+            logger.info("Pre-loading default model at startup", model=model_name)
+            await self.vllm_manager.ensure_model_loaded(model_name)
+            logger.info("Default model pre-loaded successfully", model=model_name)
+        except Exception as e:
+            logger.warning("Failed to pre-load default model", model=model_name, error=str(e))
 
     async def run(self):
         logger.info("Starting OpenClaw Gateway...")
@@ -821,6 +500,12 @@ class OpenClawGateway:
 
         # Start vLLM health monitoring
         self.vllm_manager.start_health_monitor()
+
+        # Pre-load default model to avoid cold start on first message
+        default_model = self.config.get("system", {}).get("model_router", {}).get("general", "Qwen/Qwen2.5-14B-Instruct-AWQ")
+        preload_task = asyncio.create_task(self._preload_model(default_model))
+        self._bg_tasks.add(preload_task)
+        preload_task.add_done_callback(self._bg_tasks.discard)
 
         # Start Brigade REST API (FastAPI / uvicorn) so the TypeScript
         # OpenClaw gateway can call brigade pipelines via HTTP.

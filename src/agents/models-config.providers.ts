@@ -230,6 +230,15 @@ type VllmModelsResponse = {
  * strip the `/v1` suffix when present.
  */
 export function resolveOllamaApiBase(configuredBaseUrl?: string): string {
+  const envHost = process.env.OLLAMA_HOST?.trim();
+  if (envHost) {
+    // If it's just host:port, prefix with http://
+    const url =
+      envHost.startsWith("http://") || envHost.startsWith("https://")
+        ? envHost
+        : `http://${envHost}`;
+    return url.replace(/\/+$/, "").replace(/\/v1$/i, "");
+  }
   if (!configuredBaseUrl) {
     return OLLAMA_API_BASE_URL;
   }

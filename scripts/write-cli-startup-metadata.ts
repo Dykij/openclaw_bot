@@ -39,10 +39,12 @@ type ExtensionChannelEntry = {
 
 function readBundledChannelCatalogIds(): string[] {
   const entries: ExtensionChannelEntry[] = [];
-  for (const dirEntry of readdirSync(extensionsDir, { withFileTypes: true })) {
-    if (!dirEntry.isDirectory()) {
-      continue;
-    }
+  try {
+    const dirEntries = readdirSync(extensionsDir, { withFileTypes: true });
+    for (const dirEntry of dirEntries) {
+      if (!dirEntry.isDirectory()) {
+        continue;
+      }
     const packageJsonPath = path.join(extensionsDir, dirEntry.name, "package.json");
     try {
       const raw = readFileSync(packageJsonPath, "utf8");
@@ -69,6 +71,9 @@ function readBundledChannelCatalogIds(): string[] {
     } catch {
       // Ignore malformed or missing extension package manifests.
     }
+  }
+  } catch {
+    // extensionsDir does not exist or is not readable.
   }
   return entries
     .toSorted((a, b) => (a.order === b.order ? a.label.localeCompare(b.label) : a.order - b.order))

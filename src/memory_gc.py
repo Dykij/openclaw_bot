@@ -33,15 +33,20 @@ class MemoryGarbageCollector:
     """
 
     # Compression triggers
-    TOKEN_THRESHOLD = 2400  # Trigger compression above this token count (doubled for CUDA 16GB)
+    TOKEN_THRESHOLD = 2400  # Trigger compression above this token count
     MIN_MESSAGES_TO_COMPRESS = 4  # Don't compress very short histories
-    MAX_SUMMARY_TOKENS = 800  # Target size for compressed summary (expanded for gemma3:12b 128K ctx)
+    MAX_SUMMARY_TOKENS = 800  # Target size for compressed summary
+
+    # Progressive compression: tighter limits after repeated compressions
+    AGGRESSIVE_COMPRESSION_AFTER = 3  # After N compressions, shrink harder
+    AGGRESSIVE_MAX_WORDS = 150  # Tighter word limit in aggressive mode
 
     def __init__(self, vllm_url: str = "http://localhost:8000/v1"):
         self.vllm_url = vllm_url.rstrip("/")
         self.model = "google/gemma-3-12b-it"
         self._persistent_summary: str = ""
         self._compression_count: int = 0
+        self._critical_facts: list = []  # Never-forget facts extracted during compression
 
     @property
     def persistent_summary(self) -> str:
@@ -85,6 +90,8 @@ class MemoryGarbageCollector:
         new_summary = await self._anchored_merge(conversation_msgs)
 
         if new_summary and new_summary != "ERROR_SUMMARIZING_CONTEXT":
+            # Extract critical facts from the summary for pinning
+            self._extract_critical_facts(new_summary)
             self._persistent_summary = new_summary
             self._compression_count += 1
             return self.truncate_and_replace(history, new_summary)
@@ -102,6 +109,15 @@ class MemoryGarbageCollector:
         """
         new_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in new_messages)
 
+        # Progressive compression: tighter word limits after many rounds
+        is_aggressive = self._compression_count >= self.AGGRESSIVE_COMPRESSION_AFTER
+        word_limit = self.AGGRESSIVE_MAX_WORDS if is_aggressive else 300
+
+        # Inject pinned critical facts to preserve across compressions
+        critical_section = ""
+        if self._critical_facts:
+            critical_section = "\n\nCRITICAL FACTS (MUST PRESERVE):\n" + "\n".join(f"- {f}" for f in self._critical_facts)
+
         if self._persistent_summary:
             # INCREMENTAL MERGE: existing summary + new delta
             prompt = (
@@ -113,9 +129,10 @@ class MemoryGarbageCollector:
                 "- Remove duplicate information\n"
                 "- Remove pleasantries, filler, and metadata\n"
                 "- Keep entity names, numbers, endpoints, and file paths EXACTLY as they are\n"
-                "- Output must be under 300 words\n"
-                "- Use bullet points for clarity\n\n"
-                f"EXISTING SUMMARY:\n{self._persistent_summary}\n\n"
+                f"- Output must be under {word_limit} words\n"
+                "- Use bullet points for clarity\n"
+                "- At the end, add a line: CRITICAL: [list 3-5 most important facts that must never be lost]\n\n"
+                f"EXISTING SUMMARY:\n{self._persistent_summary}{critical_section}\n\n"
                 f"NEW MESSAGES:\n{new_text}"
             )
         else:
@@ -127,8 +144,9 @@ class MemoryGarbageCollector:
                 "- Retain ONLY the most crucial technical facts, latest states, and active tasks\n"
                 "- Remove pleasantries, filler, and metadata\n"
                 "- Keep entity names, numbers, endpoints, and file paths EXACTLY as they are\n"
-                "- Output must be under 200 words\n"
-                "- Use bullet points for clarity\n\n"
+                f"- Output must be under {word_limit} words\n"
+                "- Use bullet points for clarity\n"
+                "- At the end, add a line: CRITICAL: [list 3-5 most important facts that must never be lost]\n\n"
                 f"CONVERSATION:\n{new_text}"
             )
 
@@ -162,6 +180,17 @@ class MemoryGarbageCollector:
         from src.task_queue import model_queue
 
         return await model_queue.enqueue(self.model, _run_inference)
+
+    def _extract_critical_facts(self, summary: str):
+        """Extract CRITICAL: lines from summary and pin them for future compressions."""
+        import re
+        match = re.search(r'CRITICAL:\s*(.+)', summary, re.IGNORECASE)
+        if match:
+            facts_text = match.group(1)
+            # Parse comma-separated or dash-separated facts
+            facts = [f.strip().lstrip('- ') for f in re.split(r'[,;]|\n-', facts_text) if f.strip()]
+            # Keep max 5 critical facts, newest take priority
+            self._critical_facts = facts[:5]
 
     def truncate_and_replace(
         self, history: List[Dict[str, str]], summary: str

@@ -399,6 +399,15 @@ export async function* parseNdjsonStream(
 // ── Main StreamFn factory ───────────────────────────────────────────────────
 
 function resolveOllamaChatUrl(baseUrl: string): string {
+  const envHost = process.env.OLLAMA_HOST?.trim();
+  if (envHost) {
+    const url =
+      envHost.startsWith("http://") || envHost.startsWith("https://")
+        ? envHost
+        : `http://${envHost}`;
+    const apiBase = url.replace(/\/+$/, "").replace(/\/v1$/i, "");
+    return `${apiBase}/api/chat`;
+  }
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
   const normalizedBase = trimmed.replace(/\/v1$/i, "");
   const apiBase = normalizedBase || OLLAMA_NATIVE_BASE_URL;

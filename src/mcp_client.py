@@ -41,6 +41,7 @@ class OpenClawMCPClient:
         await self._start_filesystem_server()
         await self._start_parsers_server()
         await self._start_memory_server()
+        await self._start_websearch_server()
 
     async def _start_memory_server(self):
         """Starts custom Python MCP server for hybrid memory search."""
@@ -63,6 +64,27 @@ class OpenClawMCPClient:
             print("[MCP] Memory Server initialized successfully.")
         except Exception as e:
             print(f"[MCP Error] Failed to start Memory Server: {e}")
+
+    async def _start_websearch_server(self):
+        """Starts custom Python MCP server for DuckDuckGo web search."""
+        print("[MCP] Starting WebSearch (DuckDuckGo) Server...")
+        server_params = StdioServerParameters(
+            command=PYTHON_BIN,
+            args=[os.path.join(os.path.dirname(__file__), "websearch_mcp.py")],
+            env=None
+        )
+        try:
+            read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
+            session = await self._exit_stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+            self._server_sessions.append(session)
+
+            response = await session.list_tools()
+            for tool in response.tools:
+                self._register_tool(tool, session)
+            print("[MCP] WebSearch Server initialized successfully.")
+        except Exception as e:
+            print(f"[MCP Error] Failed to start WebSearch Server: {e}")
 
     async def _start_sqlite_server(self):
         """Starts Python mcp-server-sqlite in a subprocess"""

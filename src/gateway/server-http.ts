@@ -1,8 +1,8 @@
 import {
-  createServer as createHttpServer,
-  type Server as HttpServer,
-  type IncomingMessage,
-  type ServerResponse,
+    createServer as createHttpServer,
+    type Server as HttpServer,
+    type IncomingMessage,
+    type ServerResponse,
 } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { TlsOptions } from "node:tls";
@@ -15,49 +15,50 @@ import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
 import { handleSlackHttpRequest } from "../slack/http/index.js";
 import {
-  AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
-  createAuthRateLimiter,
-  normalizeRateLimitClientIp,
-  type AuthRateLimiter,
+    AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
+    createAuthRateLimiter,
+    normalizeRateLimitClientIp,
+    type AuthRateLimiter,
 } from "./auth-rate-limit.js";
 import { type GatewayAuthResult, type ResolvedGatewayAuth } from "./auth.js";
+import { createBrigadeHttpHandler } from "./brigade-hook.js";
 import { normalizeCanvasScopedUrl } from "./canvas-capability.js";
 import {
-  handleControlUiAvatarRequest,
-  handleControlUiHttpRequest,
-  type ControlUiRootState,
+    handleControlUiAvatarRequest,
+    handleControlUiHttpRequest,
+    type ControlUiRootState,
 } from "./control-ui.js";
 import { applyHookMappings } from "./hooks-mapping.js";
 import {
-  extractHookToken,
-  getHookAgentPolicyError,
-  getHookChannelError,
-  type HookAgentDispatchPayload,
-  type HooksConfigResolved,
-  isHookAgentAllowed,
-  normalizeAgentPayload,
-  normalizeHookHeaders,
-  normalizeWakePayload,
-  readJsonBody,
-  normalizeHookDispatchSessionKey,
-  resolveHookSessionKey,
-  resolveHookTargetAgentId,
-  resolveHookChannel,
-  resolveHookDeliver,
+    extractHookToken,
+    getHookAgentPolicyError,
+    getHookChannelError,
+    isHookAgentAllowed,
+    normalizeAgentPayload,
+    normalizeHookDispatchSessionKey,
+    normalizeHookHeaders,
+    normalizeWakePayload,
+    readJsonBody,
+    resolveHookChannel,
+    resolveHookDeliver,
+    resolveHookSessionKey,
+    resolveHookTargetAgentId,
+    type HookAgentDispatchPayload,
+    type HooksConfigResolved,
 } from "./hooks.js";
 import { sendGatewayAuthFailure, setDefaultSecurityHeaders } from "./http-common.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
 import {
-  authorizeCanvasRequest,
-  enforcePluginRouteGatewayAuth,
-  isCanvasPath,
+    authorizeCanvasRequest,
+    enforcePluginRouteGatewayAuth,
+    isCanvasPath,
 } from "./server/http-auth.js";
 import {
-  isProtectedPluginRoutePathFromContext,
-  resolvePluginRoutePathContext,
-  type PluginHttpRequestHandler,
-  type PluginRoutePathContext,
+    isProtectedPluginRoutePathFromContext,
+    resolvePluginRoutePathContext,
+    type PluginHttpRequestHandler,
+    type PluginRoutePathContext,
 } from "./server/plugins-http.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
@@ -475,6 +476,8 @@ export function createGatewayHttpServer(opts: {
     resolvedAuth,
     rateLimiter,
   } = opts;
+  const handleBrigadeRequest = createBrigadeHttpHandler();
+
   const httpServer: HttpServer = opts.tlsOptions
     ? createHttpsServer(opts.tlsOptions, (req, res) => {
         void handleRequest(req, res);
@@ -527,6 +530,10 @@ export function createGatewayHttpServer(opts: {
         {
           name: "slack",
           run: () => handleSlackHttpRequest(req, res),
+        },
+        {
+          name: "brigade",
+          run: () => handleBrigadeRequest(req, res, requestPath),
         },
       ];
       if (openResponsesEnabled) {

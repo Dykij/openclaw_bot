@@ -98,6 +98,20 @@ package-lock.json
 .agents/
 .agents
 .agent/
+
+# Bot runtime artifacts
+logs/
+*.log
+*.bak
+*.bak.*
+
+# Memory bank generated files
+.memory-bank/embeddings.json
+.memory-bank/knowledge/
+
+# Python venv
+.venv/
+venv/
 skills-lock.json
 
 # Local iOS signing overrides

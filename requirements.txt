@@ -12,6 +12,7 @@ grpcio-tools
 fastapi
 redis
 uvicorn
+duckduckgo_search
 
 # GPU acceleration packages require custom build for sm_120 (see install_gpu_deps.ps1 or Dockerfile)
 # torch

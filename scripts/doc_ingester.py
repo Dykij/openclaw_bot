@@ -36,12 +36,24 @@ CHUNK_SIZE = 1500  # approximate token count per chunk (1 token ≈ 4 chars)
 CHAR_LIMIT = CHUNK_SIZE * 4  # character budget per chunk
 
 DEFAULT_SOURCES = [
-    # Python stdlib – sqlite3 module
-    "https://docs.python.org/3/library/sqlite3.html",
-    # MCP SDK reference
-    "https://modelcontextprotocol.io/docs/concepts/tools",
+    # Python 3.14 documentation
+    "https://docs.python.org/release/3.14.2/library/asyncio.html",
+    "https://docs.python.org/release/3.14.2/library/typing.html",
+    "https://docs.python.org/release/3.14.2/whatsnew/3.14.html",
+    # DMarket API v1
+    "https://docs.dmarket.com/v1/swagger.html",
+    # Rust Book (stable)
+    "https://doc.rust-lang.org/stable/book/ch04-01-what-is-ownership.html",
+    "https://doc.rust-lang.org/stable/book/ch09-02-recoverable-errors-with-result.html",
+    # TypeScript handbook
+    "https://www.typescriptlang.org/docs/handbook/2/types-from-types.html",
+    "https://www.typescriptlang.org/docs/handbook/2/generics.html",
+    # OpenClaw docs
+    "https://docs.openclaw.ai/",
+    "https://docs.openclaw.ai/concepts/",
     # Ollama API reference
-    "https://github.com/ollama/ollama/blob/main/docs/api.md",
+    "https://docs.ollama.com/api",
+    "https://docs.ollama.com/",
 ]
 
 HEADERS = {

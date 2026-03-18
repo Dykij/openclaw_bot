@@ -20,7 +20,6 @@ import json
 import logging
 import os
 import re
-import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -28,10 +27,30 @@ import aiohttp
 import structlog
 
 from src.auto_rollback import AutoRollback
-
-# Injecting MCP Client
 from src.mcp_client import OpenClawMCPClient
 from src.task_queue import ModelTaskQueue
+
+from src.pipeline_schemas import (
+    GUARDRAIL_MAX_RETRIES,
+    ROLE_GUARDRAILS,
+    ROLE_SCHEMAS,
+    ROLE_TOKEN_BUDGET,
+    TOOL_ELIGIBLE_ROLES,
+)
+from src.pipeline_utils import (
+    build_role_prompt,
+    clean_response_for_user,
+    compress_for_next_step,
+    emergency_compress,
+    group_chain,
+    sanitize_file_content,
+)
+from src.vllm_inference import (
+    call_vllm,
+    execute_stream,
+    force_unload,
+    vram_protection,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -51,10 +70,14 @@ class PipelineExecutor:
 
         # Default chain definitions per brigade (can be overridden in config)
         # Roles must match actual keys in openclaw_config.json brigades.*.roles
+        # Roles prefixed with "Executor_" that are adjacent can be run in parallel
         self.default_chains = {
-            "Dmarket": ["Planner", "Executor_API", "Archivist"],
-            "OpenClaw": ["Planner", "Executor_Tools", "Archivist"],
+            "Dmarket": ["Planner", "Foreman", "Executor_API", "Executor_Parser", "Auditor", "Archivist"],
+            "OpenClaw": ["Planner", "Foreman", "Executor_Tools", "Executor_Architect", "Auditor", "Archivist"],
         }
+
+        # Context budget: max tokens per role input (system+user). If exceeded, compress.
+        self._ctx_budget = self.config.get("system", {}).get("vllm_max_model_len", 16384)
         
         # Initialize MCP Clients dynamically based on workspace config
         framework_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -165,14 +188,47 @@ class PipelineExecutor:
 
         logger.info(f"Pipeline START: brigade={brigade}, chain={' → '.join(chain)}")
 
+        chain_groups = group_chain(chain)
+
         steps_results = []
         context_briefing = ""
+        step_index = 0
 
-        for i, role_name in enumerate(chain):
+        for group in chain_groups:
+            is_parallel = len(group) > 1
+
+            if is_parallel:
+                # Parallel execution of Executor roles
+                logger.info(f"Parallel executor batch: {group}")
+                tasks = []
+                for role_name in group:
+                    tasks.append(self._run_single_step(
+                        role_name=role_name, step_index=step_index, chain_len=len(chain),
+                        brigade=brigade, prompt=prompt, context_briefing=context_briefing,
+                        status_callback=status_callback, task_type=task_type,
+                    ))
+                    step_index += 1
+                parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
+                for role_name, res in zip(group, parallel_results):
+                    if isinstance(res, Exception):
+                        logger.error(f"Parallel step {role_name} failed: {res}")
+                        response = f"⚠️ {role_name} failed: {res}"
+                    else:
+                        response = res
+                    steps_results.append({"role": role_name, "model": "parallel", "response": response})
+                # Merge executor outputs into context briefing
+                merged = "\n\n".join(
+                    f"[{r['role']}]: {compress_for_next_step(r['role'], r['response'])}"
+                    for r in steps_results if r['role'] in group
+                )
+                context_briefing = merged
+                continue
+
+            role_name = group[0]
             if task_type:
                 model = self.config.get("system", {}).get("model_router", {}).get(task_type, "Qwen/Qwen2.5-14B-Instruct-AWQ")
                 role_config = {"model": model}
-                system_prompt = "Выполняй только ту задачу, которая указана в промпте. Никаких лишних слов."
+                system_prompt = build_role_prompt(role_name, role_config, self._framework_root, task_type=task_type)
             else:
                 role_config = (
                     self.config.get("brigades", {}).get(brigade, {}).get("roles", {}).get(role_name, {})
@@ -183,84 +239,14 @@ class PipelineExecutor:
                     continue
     
                 model = role_config.get("model", "Qwen/Qwen2.5-14B-Instruct-AWQ")
-                system_prompt = role_config.get("system_prompt", "You are an AI assistant.")
+                system_prompt = build_role_prompt(role_name, role_config, self._framework_root)
 
-            # --- ROLE-AWARE PROMPT INJECTION ---
-            is_planner = "Planner" in role_name or "Orchestrator" in role_name or "Foreman" in role_name
-            is_archivist = "Archivist" in role_name
-            is_final_step = (i == len(chain) - 1)
-
-            if is_archivist:
-                # Archivist: Skeptical Critic + Formatter (MAS verification pattern)
-                system_prompt += (
-                    "\n\n[ARCHIVIST PROTOCOL: CRITIC + FORMATTER]"
-                    "\nТы получаешь технический вывод от предыдущего агента."
-                    "\nТвоя задача — ВЕРИФИЦИРОВАТЬ и ПЕРЕПИСАТЬ его в чистый, человекочитаемый формат."
-                    "\n"
-                    "\nФАЗА 1 — ВЕРИФИКАЦИЯ (Скептический критик):"
-                    "\n- Проверь ответ на ВНУТРЕННИЕ ПРОТИВОРЕЧИЯ (одно утверждение опровергает другое)."
-                    "\n- Проверь на ФАБРИКАЦИИ: конкретные цифры, даты, имена — есть ли основания в контексте?"
-                    "\n- Проверь на TOOL BYPASS: если агент описывает 'я бы выполнил команду...' вместо реального результата — отметь как непроверенное."
-                    "\n- Если факт НЕ подкреплён данными из контекста, УДАЛИ его, а не передавай пользователю."
-                    "\n"
-                    "\nФАЗА 2 — ФОРМАТИРОВАНИЕ:"
-                    "\n- Удали ВСЮ служебную разметку: SITUATION, TASK, ACTION, RESULT, <think> блоки, [MCP...], [Proof of Work...]."
-                    "\n- НЕ добавляй вступлений ('Давайте рассмотрим...', 'Представляет собой...')."
-                    "\n- Каждое предложение = конкретный ВЕРИФИЦИРОВАННЫЙ факт или вывод."
-                    "\n- Пиши на РУССКОМ ЯЗЫКЕ."
-                    "\n- Формат: прямой ответ на вопрос пользователя, без мета-комментариев."
-                    "\n"
-                    "\nФАЗА 3 — ОЦЕНКА УВЕРЕННОСТИ:"
-                    "\n- В САМОМ КОНЦЕ ответа добавь тег: [УВЕРЕННОСТЬ: X/10]"
-                    "\n  где X — твоя оценка достоверности финального ответа (10 = абсолютно уверен, подтверждено данными; 1 = полная догадка)."
-                    "\n- Если X < 7, ПЕРЕД основным ответом добавь: '⚠️ Ответ может содержать неточности — данные частично не подтверждены.'"
-                    "\n- Оценивай честно: непроверенные факты = низкая оценка."
-                )
-            elif is_planner:
-                # Planner: STAR for internal reasoning, but final output must be clean
-                os_name = "Windows" if os.name == "nt" else "Linux"
-                system_prompt += (
-                    "\n\n[AGENT PROTOCOL: STAR-STRATEGY — INTERNAL ONLY]"
-                    "\n1. Memory Bank: Use .memory-bank for persistence."
-                    "\n2. Tooling: Если для ответа нужны данные из файловой системы, НЕМЕДЛЕННО вызывай доступные инструменты (list_directory, read_file). НЕ описывай, что ты хочешь вызвать — ВЫЗЫВАЙ."
-                    "\n3. STAR используй ТОЛЬКО внутри тегов <think>...</think> для структурирования рассуждений."
-                    "\n4. Финальный ответ (вне <think>) должен быть ЧИСТЫМ текстом для пользователя:"
-                    "\n   - БЕЗ меток SITUATION/TASK/ACTION/RESULT"
-                    "\n   - БЕЗ повторения одних и тех же фактов в разных формулировках"
-                    "\n   - Каждое предложение = новый факт или конкретное действие"
-                    "\n   - Если задача требует инструментов и ты сгенерировал JSON — добавь его в ```json``` блок"
-                    "\n5. ЗАПРЕЩЁННЫЕ конструкции: 'Представляет собой...', 'Является эффективной...', 'Для конкретных рекомендаций необходимо...'"
-                    "\n6. SCOPE LIMITATION: Объясняй только четко установленные факты из контекста и доступных данных. Если ты НЕ УВЕРЕН — скажи 'недостаточно данных' вместо домысливания. Пропускай спорные или непроверенные области."
-                    "\n7. ВАЖНО: Весь ответ на РУССКОМ ЯЗЫКЕ."
-                    f"\n8. СИСТЕМНАЯ СРЕДА: Бот работает на {os_name}. Инструменты доступны через MCP. НЕ предлагай прямые shell-команды (grep, tree, cat) — вызывай MCP-инструменты: list_directory, read_file, search_memory."
-                )
-            else:
-                # Executors and other roles: minimal protocol
-                system_prompt += (
-                    "\n\n[EXECUTOR PROTOCOL]"
-                    "\nВыполняй задачу точно по инструкции. Результат — только JSON или код."
-                    "\nНикаких пояснений, вступлений, заключений."
-                    "\nЯзык ответа: РУССКИЙ."
-                )
-
-            # Inject BRAIN.md for Planners
-            if "Planner" in role_name or "Orchestrator" in role_name or "Foreman" in role_name:
-                brain_path = os.path.join(self._framework_root, "BRAIN.md")
-                if os.path.exists(brain_path):
-                    try:
-                        with open(brain_path, "r", encoding="utf-8") as f:
-                            brain_content = f.read()
-                        brain_content = self._sanitize_file_content(brain_content)
-                        system_prompt += f"\n\n[LATEST BRAIN.md CONTEXT]\n{brain_content}"
-                    except Exception as e:
-                        logger.warning(f"Failed to read BRAIN.md: {e}")
+            is_final_step = (step_index == len(chain) - 1)
 
             # Build context-aware prompt for this step
-            if i == 0:
-                # First step: gets the raw user prompt
+            if step_index == 0:
                 step_prompt = prompt
             else:
-                # Subsequent steps: gets briefing from previous step + original task
                 step_prompt = (
                     f"[PIPELINE CONTEXT from previous step]\n"
                     f"{context_briefing}\n\n"
@@ -270,15 +256,23 @@ class PipelineExecutor:
                     f"perform your role as {role_name}."
                 )
 
+            # Context overflow guard: if input exceeds ~75% of ctx budget, compress
+            total_input_chars = len(system_prompt) + len(step_prompt)
+            estimated_tokens = total_input_chars // 4  # rough char-to-token ratio
+            ctx_threshold = int(self._ctx_budget * 0.75)
+            if estimated_tokens > ctx_threshold:
+                logger.warning(f"Context overflow for {role_name}: ~{estimated_tokens} tokens > {ctx_threshold} threshold. Compressing.")
+                step_prompt = emergency_compress(step_prompt, ctx_threshold, role_name)
+
             # Notify status
             if status_callback:
                 await status_callback(
                     role_name,
                     model,
-                    f"Шаг {i + 1}/{len(chain)}: {role_name} анализирует...",
+                    f"Шаг {step_index + 1}/{len(chain)}: {role_name} анализирует...",
                 )
 
-            logger.info(f"Pipeline step {i + 1}/{len(chain)}: {role_name} ({model})")
+            logger.info(f"Pipeline step {step_index + 1}/{len(chain)}: {role_name} ({model})")
 
             prev_model = self.last_loaded_model
             
@@ -286,9 +280,31 @@ class PipelineExecutor:
                 # Execute inference. Preserve <think> for Planners and Auditors for transparency.
                 preserve_think = any(role in role_name for role in ["Planner", "Foreman", "Orchestrator", "Auditor"])
                 active_mcp = self.openclaw_mcp if brigade == "OpenClaw" else self.dmarket_mcp
+
+                # Determine structured output schema for this role
+                role_schema = ROLE_SCHEMAS.get(role_name) if not task_type else None
+
                 response = await self._call_vllm(
-                    model, system_prompt, step_prompt, role_name, role_config, active_mcp, preserve_think=preserve_think
+                    model, system_prompt, step_prompt, role_name, role_config, active_mcp,
+                    preserve_think=preserve_think, json_schema=role_schema
                 )
+
+                # --- GUARDRAIL VALIDATION WITH RETRY ---
+                guardrail_fn = ROLE_GUARDRAILS.get(role_name)
+                if guardrail_fn and not task_type:
+                    for retry_i in range(GUARDRAIL_MAX_RETRIES):
+                        is_valid, feedback = guardrail_fn(response)
+                        if is_valid:
+                            break
+                        logger.warning(f"Guardrail failed for {role_name} (attempt {retry_i + 1}/{GUARDRAIL_MAX_RETRIES}): {feedback}")
+                        if status_callback:
+                            await status_callback(role_name, model, f"🔄 Гарантия качества: повтор {retry_i + 1} — {feedback[:60]}")
+                        # Re-call with feedback appended
+                        retry_prompt = f"{step_prompt}\n\n[GUARDRAIL FEEDBACK — исправь ответ]:\n{feedback}"
+                        response = await self._call_vllm(
+                            model, system_prompt, retry_prompt, role_name, role_config, active_mcp,
+                            preserve_think=preserve_think, json_schema=role_schema
+                        )
                 
                 self.last_loaded_model = model
 
@@ -545,6 +561,14 @@ class PipelineExecutor:
                 break
             # -----------------------------------------
 
+            # Progress callback: notify Telegram about step completion
+            if status_callback and not is_final_step:
+                step_preview = response[:120].replace('\n', ' ').strip()
+                await status_callback(
+                    role_name, model,
+                    f"✅ Шаг {step_index + 1}/{len(chain)} ({role_name}) завершён. Передаю контекст дальше..."
+                )
+
             # Git Hygiene: Auto-commit after each successful pipeline execution step
             try:
                 import subprocess
@@ -554,10 +578,12 @@ class PipelineExecutor:
                 logger.debug(f"Git auto-commit failed: {e}")
 
             # Prepare context briefing for the next step (compressed)
-            context_briefing = self._compress_for_next_step(role_name, response)
+            context_briefing = compress_for_next_step(role_name, response)
+
+            step_index += 1
 
         raw_response = steps_results[-1]["response"] if steps_results else ""
-        final_response = self._clean_response_for_user(raw_response)
+        final_response = clean_response_for_user(raw_response)
 
         logger.info(f"Pipeline COMPLETE: brigade={brigade}, steps={len(steps_results)}")
 
@@ -569,6 +595,36 @@ class PipelineExecutor:
             "status": "completed"
         }
 
+    async def _run_single_step(
+        self,
+        role_name: str,
+        step_index: int,
+        chain_len: int,
+        brigade: str,
+        prompt: str,
+        context_briefing: str,
+        status_callback=None,
+        task_type=None,
+    ) -> str:
+        """Run a single pipeline step (used for parallel Executor dispatch)."""
+        role_config = self.config.get("brigades", {}).get(brigade, {}).get("roles", {}).get(role_name, {})
+        if not role_config:
+            return f"⚠️ Role '{role_name}' not found in config."
+        model = role_config.get("model", "Qwen/Qwen2.5-14B-Instruct-AWQ")
+        system_prompt = build_role_prompt(role_name, role_config, self._framework_root)
+        step_prompt = (
+            f"[PIPELINE CONTEXT from previous step]\n{context_briefing}\n\n"
+            f"[ORIGINAL USER TASK]\n{prompt}\n\n"
+            f"Based on the above context, perform your role as {role_name}."
+        )
+        if status_callback:
+            await status_callback(role_name, model, f"⚡ Параллельно: {role_name} работает...")
+        active_mcp = self.openclaw_mcp if brigade == "OpenClaw" else self.dmarket_mcp
+        response = await self._call_vllm(
+            model, system_prompt, step_prompt, role_name, role_config, active_mcp,
+        )
+        return response
+
     async def _call_vllm(
         self,
         model: str,
@@ -577,276 +633,30 @@ class PipelineExecutor:
         role_name: str,
         role_config: Dict[str, Any],
         mcp_client: OpenClawMCPClient,
-        preserve_think: bool = False
+        preserve_think: bool = False,
+        json_schema: Optional[Dict] = None
     ) -> str:
-        """
-        Calls local vLLM server (OpenAI-compatible) for a single inference step.
-        Endpoint: POST {vllm_url}/chat/completions
-        """
-        system_prompt += (
-            " Правила плотности: каждое предложение = новый факт."
-            " Запрещено: повторять суть в разных формулировках, пустые вступления, фразы-заглушки."
-            " Максимум конкретики. Ответ на РУССКОМ ЯЗЫКЕ."
+        return await call_vllm(
+            vllm_url=self.vllm_url,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            role_name=role_name,
+            role_config=role_config,
+            mcp_client=mcp_client,
+            config=self.config,
+            vllm_manager=self.vllm_manager,
+            preserve_think=preserve_think,
+            json_schema=json_schema,
         )
 
-        # max_tokens: cap output to prevent verbose over-generation
-        # Short prompts → 2048 tokens max, long prompts → up to 4096
-        estimated_input_tokens = len(user_prompt + system_prompt) // 4
-        dynamic_max_tokens = min(4096, max(1024, min(estimated_input_tokens, 2048) + 512))
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        # Inject MCP tools for roles that need them (OpenAI-compatible tool format)
-        # Planners get read-only tools; Executors get full tool access
-        model_tools = []
-        tool_eligible_roles = ("Executor_API", "Executor_Parser", "Executor_Tools", "Latency_Optimizer", "Planner", "Foreman")
-        if role_name in tool_eligible_roles:
-            all_tools = mcp_client.available_tools_openai
-            if all_tools:
-                if "Planner" in role_name or "Foreman" in role_name:
-                    # Planners: read-only subset (list_directory, read_file, list_tables, read_query, search_memory)
-                    read_only_names = {"list_directory", "read_file", "list_tables", "read_query", "describe_table", "search_memory"}
-                    model_tools = [t for t in all_tools if t.get("function", {}).get("name") in read_only_names]
-                else:
-                    model_tools = all_tools
-                if model_tools:
-                    logger.debug(f"Injecting {len(model_tools)} tools for role {role_name}")
-
-        temperature = role_config.get("temperature", 0.3)
-        payload: Dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "max_tokens": dynamic_max_tokens,
-            "temperature": temperature,
-        }
-        if model_tools:
-            payload["tools"] = model_tools
-
-        config_timeout = self.config.get("system", {}).get("timeout_sec", 450)
-
-        # Ensure the required model is loaded via vLLM manager
-        if self.vllm_manager:
-            await self.vllm_manager.ensure_model_loaded(model)
-
-        async def _run_inference():
-            async with aiohttp.ClientSession() as session:
-                try:
-                    timeout = aiohttp.ClientTimeout(total=config_timeout)
-                    async with session.post(
-                        f"{self.vllm_url}/chat/completions",
-                        json=payload,
-                        timeout=timeout,
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            choice = data.get("choices", [{}])[0]
-                            msg = choice.get("message", {})
-
-                            # Handle tool calls (OpenAI-compatible format)
-                            if msg.get("tool_calls"):
-                                tool_calls = msg["tool_calls"]
-                                logger.info(f"Model requested tool calls: {tool_calls}")
-
-                                tool_results = []
-                                for tool_call in tool_calls:
-                                    function_name = tool_call["function"]["name"]
-                                    function_args = tool_call["function"]["arguments"]
-                                    if isinstance(function_args, str):
-                                        try:
-                                            function_args = json.loads(function_args)
-                                        except json.JSONDecodeError:
-                                            pass
-                                    try:
-                                        result = await mcp_client.call_tool(function_name, function_args)
-                                        tool_results.append({
-                                            "role": "tool",
-                                            "tool_call_id": tool_call.get("id", ""),
-                                            "content": json.dumps(result),
-                                        })
-                                        logger.info(f"Tool {function_name} executed. Result: {result}")
-                                    except Exception as e:
-                                        tool_results.append({
-                                            "role": "tool",
-                                            "tool_call_id": tool_call.get("id", ""),
-                                            "content": json.dumps({"error": str(e)}),
-                                        })
-                                        logger.error(f"Tool {function_name} failed: {e}")
-
-                                messages.append(msg)
-                                messages.extend(tool_results)
-                                payload["messages"] = messages
-
-                                async with session.post(
-                                    f"{self.vllm_url}/chat/completions",
-                                    json=payload,
-                                    timeout=timeout,
-                                ) as resp2:
-                                    if resp2.status == 200:
-                                        data2 = await resp2.json()
-                                        text = data2["choices"][0]["message"]["content"].strip()
-                                        if not preserve_think:
-                                            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-                                        return text
-                                    return f"⚠️ vLLM Error after tool call ({resp2.status})"
-                            else:
-                                text = msg.get("content", "").strip()
-                                if not preserve_think:
-                                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-                                return text
-                        else:
-                            error_body = ""
-                            try:
-                                error_body = await resp.text()
-                            except Exception:
-                                pass
-                            # Fallback: if 400 due to tool_choice not supported, retry without tools
-                            if resp.status == 400 and "tool" in error_body.lower() and model_tools:
-                                logger.warning("vLLM rejected tools, retrying without tool_choice", status=resp.status)
-                                payload.pop("tools", None)
-                                payload.pop("tool_choice", None)
-                                async with session.post(
-                                    f"{self.vllm_url}/chat/completions",
-                                    json=payload,
-                                    timeout=timeout,
-                                ) as retry_resp:
-                                    if retry_resp.status == 200:
-                                        retry_data = await retry_resp.json()
-                                        text = retry_data["choices"][0]["message"]["content"].strip()
-                                        if not preserve_think:
-                                            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-                                        return text
-                                    retry_body = await retry_resp.text()
-                                    return f"⚠️ vLLM Error ({retry_resp.status}): {retry_body[:200]}"
-                            if resp.status == 404:
-                                return (
-                                    f"⚠️ Model `{model}` not found on vLLM server (HTTP 404).\n"
-                                    f"Check that the model is downloaded and available."
-                                )
-                            return f"⚠️ vLLM Error ({resp.status}): {error_body[:200]}"
-                except asyncio.TimeoutError:
-                    return f"❌ Timeout: model did not respond within {config_timeout}s"
-                except Exception as e:
-                    return f"❌ Error: {e}"
-
-        from src.task_queue import model_queue
-
-        return await model_queue.enqueue(model, _run_inference)
-
     async def _force_unload(self, model: str):
-        """No-op for vLLM — model lifecycle is managed by VLLMModelManager."""
-        pass
+        await force_unload(model)
+
+    async def execute_stream(self, prompt, brigade="Dmarket", max_steps=5, status_callback=None, task_type=None):
+        return await execute_stream(self, prompt, brigade, max_steps, status_callback, task_type)
 
     @asynccontextmanager
     async def _vram_protection(self, target_model: str, prev_model: Optional[str]):
-        """Context manager to ensure strict VRAM unloading and logging heavy switches."""
-        switch_start = time.time()
-        
-        # Unload prev model if different (VRAM Guard 2.0)
-        if prev_model and prev_model != target_model:
-            logger.info(f"[VRAM Guard 2.0] Anti-thrash: unloading {prev_model} before loading {target_model}")
-            unload_start = time.time()
-            await self._force_unload(prev_model)
-            unload_duration = time.time() - unload_start
-            if unload_duration > 10:
-                logger.warning(f"⚠️ [VRAM ALERT] Unloading {prev_model} took excessive time: {unload_duration:.2f}s!")
-                
-        try:
+        async with vram_protection(target_model, prev_model):
             yield
-        finally:
-            # Leave model hot. It will be unloaded when switching to a differently named model.
-            pass
-
-    @staticmethod
-    def _clean_response_for_user(text: str) -> str:
-        """Strip internal STAR markup, <think> blocks, MCP artifacts, and process confidence tags."""
-        # Remove <think>...</think> blocks
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-        # Remove STAR labels (SITUATION:, TASK:, ACTION:, RESULT: at line start)
-        text = re.sub(r"^\s*(SITUATION|TASK|ACTION|RESULT)\s*:\s*", "", text, flags=re.MULTILINE)
-        # Remove [MCP ...], [Proof of Work ...], [Correction], [PIPELINE CONTEXT ...] blocks
-        text = re.sub(r"\[MCP[^\]]*\]:?[^\n]*\n?", "", text)
-        text = re.sub(r"\[Proof of Work[^\]]*\]:?[^\n]*\n?", "", text)
-        text = re.sub(r"\[Correction\]:?\s*", "", text)
-        text = re.sub(r"\[PIPELINE CONTEXT[^\]]*\][^\n]*\n?", "", text)
-        # Remove [AGENT PROTOCOL...] remnants
-        text = re.sub(r"\[AGENT PROTOCOL[^\]]*\][^\n]*\n?", "", text)
-        # Remove [ARCHIVIST PROTOCOL...] remnants
-        text = re.sub(r"\[ARCHIVIST PROTOCOL[^\]]*\][^\n]*\n?", "", text)
-        # Remove [EXECUTOR PROTOCOL...] remnants
-        text = re.sub(r"\[EXECUTOR PROTOCOL[^\]]*\][^\n]*\n?", "", text)
-        # Remove [RAG_CONFIDENCE: ...] tags (used internally by memory search)
-        text = re.sub(r"\[RAG_CONFIDENCE:\s*\w+\]\s*", "", text)
-        # Remove stray JSON tool-call artifacts outside code blocks (e.g. {"name": "...", "arguments": ...})
-        text = re.sub(r'(?<!`)\{"name"\s*:.*?"arguments"\s*:.*?\}(?!`)', '', text, flags=re.DOTALL)
-        # Remove repeated consecutive paragraphs (dedup)
-        paragraphs = text.split('\n\n')
-        seen = set()
-        deduped = []
-        for p in paragraphs:
-            p_key = p.strip().lower()
-            if p_key and p_key not in seen:
-                seen.add(p_key)
-                deduped.append(p)
-            elif not p_key:
-                deduped.append(p)
-        text = '\n\n'.join(deduped)
-        # Process confidence tag: [УВЕРЕННОСТЬ: X/10]
-        confidence_match = re.search(r'\[УВЕРЕННОСТЬ:\s*(\d+)/10\]', text)
-        if confidence_match:
-            score = int(confidence_match.group(1))
-            text = re.sub(r'\s*\[УВЕРЕННОСТЬ:\s*\d+/10\]\s*', '', text)
-            if score < 7:
-                text = '⚠️ Ответ может содержать неточности — данные частично не подтверждены.\n\n' + text
-        # Collapse excessive blank lines
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
-
-    def _compress_for_next_step(self, role_name: str, response: str) -> str:
-        """
-        Smart context compression: preserves JSON blocks, MCP results,
-        and respects sentence boundaries instead of blind truncation.
-        """
-        # 1. Extract and preserve JSON code blocks (instructions for Executor)
-        json_blocks = re.findall(r'```json\s*(.*?)\s*```', response, re.DOTALL)
-        json_section = ""
-        if json_blocks:
-            json_section = "\n```json\n" + json_blocks[0][:800] + "\n```"
-
-        # 2. Extract MCP execution results
-        mcp_results = re.findall(r'\[MCP Execution Result\]:\n(.*?)(?:\n\n|\Z)', response, re.DOTALL)
-        mcp_section = ""
-        if mcp_results:
-            mcp_section = "\n[MCP Result]: " + mcp_results[0][:500]
-
-        # 3. Clean text: remove <think>, STAR labels, code blocks, MCP markers
-        clean = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
-        clean = re.sub(r'```json.*?```', '', clean, flags=re.DOTALL)
-        clean = re.sub(r'\[MCP[^\]]*\].*?\n', '', clean)
-        clean = re.sub(r'\[Proof of Work[^\]]*\].*?\n', '', clean)
-        clean = re.sub(r'\n{2,}', '\n', clean).strip()
-
-        # 4. Smart truncation: up to 1500 chars, respecting sentence boundaries
-        max_chars = 1500
-        if len(clean) > max_chars:
-            cut = clean[:max_chars]
-            last_boundary = max(cut.rfind('. '), cut.rfind('! '), cut.rfind('? '), cut.rfind('\n'))
-            if last_boundary > max_chars // 2:
-                cut = cut[:last_boundary + 1]
-            clean = cut + "..."
-
-        return f"[{role_name} Output]: {clean}{json_section}{mcp_section}"
-
-    @staticmethod
-    def _sanitize_file_content(content: str) -> str:
-        """Strip potential prompt injection markers from file content before prompt injection."""
-        # Remove system/user/assistant role markers that could override the LLM prompt
-        content = re.sub(r'(?i)\[?(system|user|assistant)\s*(prompt|message|role)\]?\s*:', '', content)
-        # Neutralize instruction override attempts
-        content = re.sub(r'(?i)(ignore previous instructions|forget your instructions|new instructions:)', '[FILTERED]', content)
-        # Neutralize <|im_start|> / <|im_end|> chat template injection
-        content = re.sub(r'<\|im_(start|end)\|>', '', content)
-        return content

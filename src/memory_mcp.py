@@ -56,7 +56,7 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     return sum(a * b for a, b in zip(v1, v2))
 
 async def vector_search(query: str, tier: str, top_k: int = 5) -> List[str]:
-    """Perform semantic search using cached embeddings."""
+    """Perform semantic search using cached embeddings with adaptive threshold."""
     query_vec = await get_embeddings(query)
     if not query_vec:
         return []
@@ -75,11 +75,35 @@ async def vector_search(query: str, tier: str, top_k: int = 5) -> List[str]:
         if tier != "all" and data.get("tier") != tier:
             continue
         sim = cosine_similarity(query_vec, data.get("vector", []))
-        if sim > 0.4: # Similarity threshold
-            results.append((sim, data.get("text", "")))
-    
+        results.append((sim, data.get("text", "")))
+
     results.sort(key=lambda x: x[0], reverse=True)
-    return [text for sim, text in results[:top_k]]
+
+    # Adaptive threshold: take top_k results, but only if sim > 0.3
+    # If the best result is very high (>0.7), tighten threshold to top_result * 0.6
+    if not results:
+        return []
+    best_sim = results[0][0]
+    threshold = max(0.3, best_sim * 0.6) if best_sim > 0.7 else 0.3
+    filtered = [(sim, text) for sim, text in results if sim >= threshold]
+    return [text for sim, text in filtered[:top_k]]
+
+
+async def expand_query(query: str) -> List[str]:
+    """Expand query with synonyms/related terms for better BM25 recall."""
+    # Generate 2-3 alternative search terms using simple heuristics
+    expansions = [query]
+    # Split into words, add individual significant words (>3 chars) as separate searches
+    words = [w for w in query.split() if len(w) > 3]
+    if len(words) > 1:
+        expansions.append(" ".join(words[:3]))  # first 3 significant words
+    # Transliteration-aware: if query has cyrillic, keep as-is
+    # Add common abbreviations
+    abbrevs = {"api": "API интерфейс", "бд": "база данных database", "мсп": "MCP"}
+    for w in words:
+        if w.lower() in abbrevs:
+            expansions.append(abbrevs[w.lower()])
+    return expansions[:3]  # max 3 query variants
 
 @mcp.tool()
 async def search_memory(query: str, tier: str = "all", top_k: int = 3) -> str:
@@ -110,20 +134,22 @@ async def search_memory(query: str, tier: str = "all", top_k: int = 3) -> str:
     else:  # all
         files_to_search = [HOT_MEMORY, DOMAIN_EXPERTS, COLD_MEMORY] + knowledge_files
 
-    # 1. Keyword Search via ripgrep (The BM25 proxy)
+    # 1. Keyword Search via ripgrep with query expansion (BM25 proxy)
+    expanded_queries = await expand_query(query)
     rg_matches = []
     for file_path in files_to_search:
         if not os.path.exists(file_path):
             continue
-        try:
-            result = subprocess.run(
-                ["rg", "-i", "-C", "2", "--no-heading", query, file_path],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.stdout:
-                rg_matches.append(result.stdout)
-        except Exception as e:
-            print(f"Error searching {file_path}: {e}")
+        for q in expanded_queries:
+            try:
+                result = subprocess.run(
+                    ["rg", "-i", "-C", "2", "--no-heading", q, file_path],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.stdout:
+                    rg_matches.append(result.stdout)
+            except Exception as e:
+                print(f"Error searching {file_path}: {e}")
 
     # 2. Vector Search (Semantic)
     v_matches = await vector_search(query, tier, top_k=top_k*2)
