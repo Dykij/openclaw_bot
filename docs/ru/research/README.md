@@ -23,6 +23,15 @@
 - **Выравнивание (Alignment)** — Constitutional AI, TruthRL, самокоррекция
 - **Инференс и обслуживание** — vLLM, AWQ, оптимизация внимания
 
+## DevOps: Контейнеризация, Оркестрация, Безопасность, Скиллы
+
+- **[🚀 20 улучшений DevOps](devops-improvements-20.md)** — Список из 20 улучшений по 4 категориям:
+  - 📦 Контейнеризация (5): rootless, distroless, gVisor, GPU MPS, OCI signing
+  - 🎯 Оркестрация (5): Kubernetes GPU, GitOps, KEDA, Celery, OpenTelemetry
+  - 🔒 Безопасность (5): prompt injection defense, Trivy, Vault, RASP, threat model
+  - ⚡ Новые скиллы (5): WASM sandbox, GPU monitor, backup, multi-agent protocol, self-healing
+- **[Детальный анализ (папка)](devops/)** — JSON и markdown файлы с полным анализом
+
 ## Как использовать
 
 1. **Навигация** — Перейдите в папку нужного источника для полного списка статей.
