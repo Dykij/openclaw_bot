@@ -128,3 +128,7 @@ cloudflared
 cloudflared.log
 .bot.lock
 *.lock.json
+
+# Training data and adapters (generated at runtime)
+training_data/
+lora_adapters/
