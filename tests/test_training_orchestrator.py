@@ -234,14 +234,18 @@ class TestExperienceBuffer:
         interactions = orchestrator.generate_synthetic_data()
         rewarded = orchestrator.compute_rewards(interactions)
         await orchestrator.fill_experience_buffer(rewarded)
+        # Buffer should contain exactly as many entries as rewarded interactions
         assert orchestrator.experience_buffer.size == len(rewarded)
+        assert orchestrator.metrics.buffer_size == len(rewarded)
 
     @pytest.mark.asyncio
     async def test_contrastive_pairs_generated(self, orchestrator):
         interactions = orchestrator.generate_synthetic_data()
         rewarded = orchestrator.compute_rewards(interactions)
         await orchestrator.fill_experience_buffer(rewarded)
-        assert orchestrator.metrics.contrastive_pairs_generated > 0
+        # Each scenario produces a good+bad pair on the same prompt → 19 contrastive pairs
+        total_scenarios = len(DMARKET_SCENARIOS) + len(OPENCLAW_SCENARIOS) + len(EXTRA_SCENARIOS)
+        assert orchestrator.metrics.contrastive_pairs_generated == total_scenarios
 
     @pytest.mark.asyncio
     async def test_corrections_generated(self, orchestrator):
@@ -286,7 +290,8 @@ class TestGRPOTraining:
         rewarded = orchestrator.compute_rewards(interactions)
         await orchestrator.fill_experience_buffer(rewarded)
         await orchestrator.run_grpo_training(rewarded)
-        assert orchestrator.metrics.grpo_advantages_computed > 0
+        # 38 base interactions + 2 augmentations each = 38 * 3 = 114
+        assert orchestrator.metrics.grpo_advantages_computed == len(rewarded) * 3
 
     @pytest.mark.asyncio
     async def test_lambda_adapted(self, orchestrator):
