@@ -25,7 +25,7 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 import structlog
@@ -340,7 +340,7 @@ class ReActReasoner:
         )
 
     @staticmethod
-    def _parse_react_output(raw: str) -> tuple[str, str, str]:
+    def _parse_react_output(raw: str) -> Tuple[str, str, str]:
         """Extract Thought / Action / Action Input from model output."""
         thought = ""
         action = ""
@@ -758,7 +758,7 @@ class ConstitutionalChecker:
 
     async def _evaluate_principles(
         self, prompt: str, response: str
-    ) -> tuple[List[str], Dict[str, float]]:
+    ) -> Tuple[List[str], Dict[str, float]]:
         principles_block = "\n".join(
             f"{i + 1}. {p}" for i, p in enumerate(self.PRINCIPLES)
         )
