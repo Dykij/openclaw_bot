@@ -205,4 +205,107 @@ class MemoryGarbageCollector:
         return {
             "compression_count": self._compression_count,
             "persistent_summary_tokens": estimate_tokens(self._persistent_summary),
+            "episode_memory_count": len(self._episode_memory),
         }
+
+    # --- Memento-style Episode Memory (arXiv:2508.16153) ---
+    # Stores successful episode trajectories for retrieval-augmented learning
+    # Zero VRAM overhead — pure in-memory storage with disk persistence
+
+    def __init_episode_memory(self) -> None:
+        """Initialize episode memory storage (called from __init__)."""
+        if not hasattr(self, "_episode_memory"):
+            self._episode_memory: List[Dict] = []
+            self._episode_memory_file = os.path.join(
+                os.path.dirname(__file__), "..", "training_data", "episode_memory.jsonl"
+            )
+            self._load_episode_memory()
+
+    def _load_episode_memory(self) -> None:
+        """Load episode memory from disk."""
+        import json
+        if not os.path.exists(self._episode_memory_file):
+            return
+        try:
+            with open(self._episode_memory_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        self._episode_memory.append(json.loads(line))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    def store_successful_episode(
+        self,
+        task_description: str,
+        trajectory: List[Dict[str, str]],
+        reward: float,
+        brigade: str = "OpenClaw",
+    ) -> None:
+        """
+        Store a successful episode trajectory for future retrieval.
+        Memento pattern: learn from successful episodes without gradient updates.
+
+        Args:
+            task_description: What the episode was about
+            trajectory: List of (role, prompt, response) dicts
+            reward: Final reward score
+            brigade: Brigade that executed this episode
+        """
+        import json
+        from datetime import datetime, timezone
+
+        if reward < 0.6:  # Only store high-quality episodes
+            return
+
+        self.__init_episode_memory()
+
+        episode = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "task": task_description[:500],
+            "brigade": brigade,
+            "reward": round(reward, 3),
+            "num_steps": len(trajectory),
+            "trajectory": trajectory[:20],  # Cap at 20 steps
+        }
+
+        self._episode_memory.append(episode)
+
+        # Persist to disk
+        os.makedirs(os.path.dirname(self._episode_memory_file), exist_ok=True)
+        with open(self._episode_memory_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(episode, ensure_ascii=False) + "\n")
+
+    def retrieve_similar_episodes(
+        self,
+        task_description: str,
+        top_k: int = 3,
+    ) -> List[Dict]:
+        """
+        Retrieve similar successful episodes for few-shot learning.
+        Simple keyword matching (no VRAM needed).
+
+        Args:
+            task_description: Current task to find similar episodes for
+            top_k: Number of episodes to return
+
+        Returns:
+            List of most similar episode records.
+        """
+        self.__init_episode_memory()
+
+        if not self._episode_memory:
+            return []
+
+        # Simple keyword overlap scoring
+        task_words = set(task_description.lower().split())
+
+        scored = []
+        for episode in self._episode_memory:
+            ep_words = set(episode.get("task", "").lower().split())
+            overlap = len(task_words & ep_words)
+            if overlap > 0:
+                scored.append((overlap, episode))
+
+        scored.sort(key=lambda x: (-x[0], -x[1].get("reward", 0)))
+        return [ep for _, ep in scored[:top_k]]
