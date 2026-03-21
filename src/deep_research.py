@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import aiohttp
+import aiohttp  # used in _fetch_via_firecrawl (optional Firecrawl provider)
 import structlog
 
 logger = structlog.get_logger("DeepResearch")

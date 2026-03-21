@@ -172,7 +172,7 @@ def _fetch_via_jina(url: str, max_chars: int) -> str:
             "Accept": "text/plain, text/markdown, */*",
         },
     )
-    with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 -- URL validated by _validate_url
         raw = resp.read(max_chars + 4096).decode("utf-8", errors="replace")
     return raw[:max_chars]
 
@@ -180,7 +180,6 @@ def _fetch_via_jina(url: str, max_chars: int) -> str:
 def _fetch_via_plain_http(url: str, max_chars: int) -> str:
     """Fallback: plain HTTP fetch with minimal HTML stripping."""
     _validate_url(url)
-    import re
     req = urllib.request.Request(
         url,
         headers={
@@ -188,7 +187,7 @@ def _fetch_via_plain_http(url: str, max_chars: int) -> str:
             "Accept": "text/html, text/plain, */*",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 -- URL validated by _validate_url
         raw = resp.read(max_chars * 3).decode("utf-8", errors="replace")
     # Strip script/style blocks, then HTML tags
     raw = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", raw, flags=re.IGNORECASE | re.DOTALL)

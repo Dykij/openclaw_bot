@@ -79,6 +79,9 @@ from src.inference_optimizer import (
     RoutingTask,
     SmartModelRouter,
     SpeculativeDecodingConfig,
+    ChunkedPrefillConfig,
+    PrefixCachingConfig,
+    build_optimized_vllm_args,
     TokenBudget,
 )
 
@@ -638,12 +641,121 @@ class TestSpeculativeDecodingConfig:
         assert cfg.to_vllm_args() == []
         assert cfg.estimated_vram_overhead_gb() == 0.0
 
-    def test_enabled_args(self):
-        cfg = SpeculativeDecodingConfig(enabled=True, num_speculative_tokens=3)
+    # --- original draft-model mode ---
+    def test_enabled_draft_model_args(self):
+        cfg = SpeculativeDecodingConfig(
+            enabled=True, use_ngram=False, num_speculative_tokens=3
+        )
         args = cfg.to_vllm_args()
         assert "--speculative-model" in args
         assert "3" in args
+        assert "--num-speculative-tokens" in args
         assert cfg.estimated_vram_overhead_gb() == 1.0
+
+    # --- new ngram mode ---
+    def test_enabled_ngram_args(self):
+        cfg = SpeculativeDecodingConfig(
+            enabled=True, use_ngram=True,
+            ngram_prompt_lookup_max=4, num_speculative_tokens=5,
+        )
+        args = cfg.to_vllm_args()
+        assert "--speculative-model" in args
+        idx = args.index("--speculative-model")
+        assert args[idx + 1] == "[ngram]"
+        assert "--ngram-prompt-lookup-max" in args
+        assert "--num-speculative-tokens" in args
+        assert "5" in args
+
+    def test_ngram_zero_vram_overhead(self):
+        cfg = SpeculativeDecodingConfig(enabled=True, use_ngram=True)
+        assert cfg.estimated_vram_overhead_gb() == 0.0
+
+    def test_draft_model_has_vram_overhead(self):
+        cfg = SpeculativeDecodingConfig(enabled=True, use_ngram=False)
+        assert cfg.estimated_vram_overhead_gb() == 1.0
+
+    def test_ngram_default_is_true(self):
+        """N-gram should be the default mode to avoid extra VRAM cost."""
+        cfg = SpeculativeDecodingConfig(enabled=True)
+        assert cfg.use_ngram is True
+        assert cfg.estimated_vram_overhead_gb() == 0.0
+
+
+class TestChunkedPrefillConfig:
+    def test_disabled_no_args(self):
+        cfg = ChunkedPrefillConfig(enabled=False)
+        assert cfg.to_vllm_args() == []
+
+    def test_enabled_produces_flags(self):
+        cfg = ChunkedPrefillConfig(enabled=True, max_num_batched_tokens=2048)
+        args = cfg.to_vllm_args()
+        assert "--enable-chunked-prefill" in args
+        assert "--max-num-batched-tokens" in args
+        assert "2048" in args
+
+    def test_default_max_batched_tokens(self):
+        cfg = ChunkedPrefillConfig(enabled=True)
+        args = cfg.to_vllm_args()
+        idx = args.index("--max-num-batched-tokens")
+        assert int(args[idx + 1]) > 0
+
+    def test_custom_batched_tokens(self):
+        cfg = ChunkedPrefillConfig(enabled=True, max_num_batched_tokens=8192)
+        args = cfg.to_vllm_args()
+        assert "8192" in args
+
+
+class TestPrefixCachingConfig:
+    def test_disabled_no_args(self):
+        cfg = PrefixCachingConfig(enabled=False)
+        assert cfg.to_vllm_args() == []
+
+    def test_enabled_produces_flag(self):
+        cfg = PrefixCachingConfig(enabled=True)
+        args = cfg.to_vllm_args()
+        assert args == ["--enable-prefix-caching"]
+
+
+class TestBuildOptimizedVllmArgs:
+    def test_all_disabled_returns_empty(self):
+        result = build_optimized_vllm_args(
+            speculative=SpeculativeDecodingConfig(enabled=False),
+            chunked_prefill=ChunkedPrefillConfig(enabled=False),
+            prefix_caching=PrefixCachingConfig(enabled=False),
+        )
+        assert result == []
+
+    def test_none_configs_returns_empty(self):
+        assert build_optimized_vllm_args() == []
+
+    def test_merges_all_enabled_configs(self):
+        result = build_optimized_vllm_args(
+            speculative=SpeculativeDecodingConfig(
+                enabled=True, use_ngram=True, num_speculative_tokens=4
+            ),
+            chunked_prefill=ChunkedPrefillConfig(enabled=True, max_num_batched_tokens=2048),
+            prefix_caching=PrefixCachingConfig(enabled=True),
+        )
+        assert "--speculative-model" in result
+        assert "[ngram]" in result
+        assert "--enable-chunked-prefill" in result
+        assert "--max-num-batched-tokens" in result
+        assert "2048" in result
+        assert "--enable-prefix-caching" in result
+
+    def test_only_prefix_caching_enabled(self):
+        result = build_optimized_vllm_args(
+            prefix_caching=PrefixCachingConfig(enabled=True),
+        )
+        assert result == ["--enable-prefix-caching"]
+
+    def test_speculative_only_ngram(self):
+        result = build_optimized_vllm_args(
+            speculative=SpeculativeDecodingConfig(enabled=True, use_ngram=True),
+        )
+        assert "--speculative-model" in result
+        assert "[ngram]" in result
+        assert "--enable-prefix-caching" not in result
 
 
 class TestDynamicBatchScheduler:

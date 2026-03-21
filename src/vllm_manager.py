@@ -23,6 +23,13 @@ from typing import Optional
 import aiohttp
 import structlog
 
+from src.inference_optimizer import (
+    ChunkedPrefillConfig,
+    PrefixCachingConfig,
+    SpeculativeDecodingConfig,
+    build_optimized_vllm_args,
+)
+
 logger = structlog.get_logger("VLLMManager")
 
 # WSL paths
@@ -37,6 +44,16 @@ class VLLMModelManager:
     Manages a local vLLM OpenAI-compatible server process.
     Supports automatic model swapping on a single GPU.
     Supports LoRA adapter loading for fine-tuned models.
+
+    Throughput / latency optimisations are applied at startup time by passing
+    the appropriate CLI flags derived from the optional config objects:
+
+    - ``speculative``: n-gram or draft-model speculative decoding (1.3–2.5× TPS)
+    - ``chunked_prefill``: avoids ITL spikes from long prompts (Sarathi-Serve)
+    - ``prefix_caching``: automatic KV-cache reuse for shared prefixes (RadixAttention)
+
+    All three are disabled by default for compatibility.  Enable them individually
+    once the target vLLM version is confirmed to support the combination.
     """
 
     def __init__(
@@ -46,12 +63,17 @@ class VLLMModelManager:
         max_model_len: int = 8192,
         quantization: Optional[str] = None,
         vllm_extra_args: Optional[list] = None,
+        speculative: Optional[SpeculativeDecodingConfig] = None,
+        chunked_prefill: Optional[ChunkedPrefillConfig] = None,
+        prefix_caching: Optional[PrefixCachingConfig] = None,
     ):
         self.port = port
         self.gpu_memory_utilization = gpu_memory_utilization
         self.max_model_len = max_model_len
         self.quantization = quantization  # e.g. "awq", "gptq", None (auto)
-        self.vllm_extra_args = vllm_extra_args or []
+        # Compose optimisation flags first, then append any manual overrides.
+        opt_args = build_optimized_vllm_args(speculative, chunked_prefill, prefix_caching)
+        self.vllm_extra_args = opt_args + (vllm_extra_args or [])
         self.base_url = f"http://localhost:{port}/v1"
 
         self.current_model: Optional[str] = None
