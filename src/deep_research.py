@@ -3,26 +3,32 @@ Deep Research Pipeline for OpenClaw.
 Multi-step iterative research with parallel search, fact verification,
 cumulative context, self-critique, and source citation.
 
-Enhanced flow (v2 — with deep research improvements):
+Enhanced flow (v3 — with Gemini analysis improvements):
  1. Estimate complexity → set adaptive depth
  2. Decompose question into sub-queries
  2a. **Multi-perspective reformulation** — rephrase each sub-query from 2-3 angles
  3. Parallel search (web + memory + **academic**) for all sub-queries
- 3a. **Evidence scoring** — weight each evidence piece by relevance & source diversity
+ 3a. **Full-page content enrichment** — fetch top-N pages via web_fetch (Jina Reader/HTTP fallback)
+     so the agent reads actual article content, not just search snippets ("blindness fix")
+ 3b. **Evidence scoring** — weight each evidence piece by relevance & source diversity
  4. **Contradiction detection** across gathered evidence
  5. Verify key claims via cross-search
- 6. Synthesize report with source citations [N]
+ 6. Synthesize report with source citations [N] — guarded by token budget
  7. Self-critique → revise report
  8. Gap analysis → targeted follow-up searches → refine
  8a. **Adaptive stopping** — stop when confidence threshold is met
  9. **Confidence calibration** — compute overall confidence score
 10. Final fact-check pass before delivery
 
+Optional Firecrawl provider: set FIRECRAWL_API_KEY env var to enable headless-browser
+scraping as a higher-quality fallback when standard web_fetch fails or returns thin content.
+
 Triggered by /research command or when Planner detects complex factual questions.
 """
 
 import asyncio
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -88,11 +94,39 @@ _DEPTH_PROFILES = {
 # Confidence threshold for adaptive stopping
 _CONFIDENCE_THRESHOLD = 0.75
 
+# Maximum total characters of evidence passed to _synthesize (token-budget guard).
+# ~96 k chars ≈ 24 k tokens — keeps the context window safe for 32 k-token models.
+_EVIDENCE_TOKEN_BUDGET_CHARS = 96_000
+
+# Number of full pages to fetch per research session (enrichment step)
+_MAX_PAGES_TO_FETCH = 3
+
+# Minimum characters for fetched content to be considered useful
+_MIN_USEFUL_CONTENT_CHARS = 200
+
+# Maximum characters kept from each enriched full-page chunk.
+# Smaller than web_fetch max (32 k) so multiple pages fit in the token budget.
+_MAX_ENRICHED_CONTENT_CHARS = 8_000
+
+# Characters requested from web_fetch per page (set to 2× _MAX_ENRICHED_CONTENT_CHARS
+# so the MCP layer has room to return enough content for us to trim to budget).
+_WEB_FETCH_REQUEST_CHARS = _MAX_ENRICHED_CONTENT_CHARS * 2
+
+# Firecrawl API endpoint (used only when FIRECRAWL_API_KEY is set)
+_FIRECRAWL_API_URL = "https://api.firecrawl.dev/v1/scrape"
+
+# Truncation notice embedded in token-budget-trimmed evidence text
+_TOKEN_BUDGET_TRUNCATION_NOTICE = "TRUNCATED"
+
 
 class DeepResearchPipeline:
     """Iterative research pipeline with parallel search, fact verification and self-critique.
 
-    V2 improvements:
+    V3 improvements (based on Gemini architectural analysis):
+    - Full-page content enrichment via web_fetch (Jina Reader → plain-HTTP fallback)
+      fixes the "agent blindness" problem where only search snippets were used
+    - Optional Firecrawl provider (FIRECRAWL_API_KEY env var) for bot-protected sites
+    - Token-budget guard prevents context overflow during synthesis
     - Multi-perspective query reformulation
     - Evidence scoring & weighting
     - Contradiction detection
@@ -111,6 +145,8 @@ class DeepResearchPipeline:
         self._research_context: List[str] = []
         # Academic search integration (lazy-loaded)
         self._academic_search_enabled = True
+        # Firecrawl integration (enabled when FIRECRAWL_API_KEY is set in environment)
+        self._firecrawl_api_key: Optional[str] = os.environ.get("FIRECRAWL_API_KEY")
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -196,12 +232,32 @@ class DeepResearchPipeline:
             f"всего {state.evidence_count} блоков доказательств."
         )
 
-        # Step 2a: Evidence scoring (v2 improvement)
+        # Step 2a: Full-page content enrichment (v3 improvement — fixes "blindness" problem).
+        # Extract URLs from search snippets and fetch full readable content for top pages.
+        if status_callback:
+            await status_callback(
+                "DeepResearch", self.model,
+                f"📄 Загрузка полного содержимого страниц (до {_MAX_PAGES_TO_FETCH})..."
+            )
+        enriched_evidence = await self._enrich_with_full_content(search_results)
+        if enriched_evidence:
+            all_evidence.extend(enriched_evidence)
+            for chunk in enriched_evidence:
+                state.add_evidence(EvidencePiece(
+                    query="full_page_content", source_type="web_full",
+                    content=chunk, confidence=0.9,
+                ))
+            self._research_context.append(
+                f"Получен полный текст {len(enriched_evidence)} страниц через web_fetch."
+            )
+            logger.info("Page enrichment complete", pages_fetched=len(enriched_evidence))
+
+        # Step 2b: Evidence scoring (v2 improvement)
         if status_callback:
             await status_callback("DeepResearch", self.model, "⚖️ Оценка релевантности доказательств...")
         scored_evidence = await self._score_evidence(question, all_evidence)
 
-        # Step 2b: Contradiction detection (v2 improvement)
+        # Step 2c: Contradiction detection (v2 improvement)
         if status_callback:
             await status_callback("DeepResearch", self.model, "⚡ Обнаружение противоречий...")
         contradictions = await self._detect_contradictions(question, all_evidence)
@@ -212,7 +268,7 @@ class DeepResearchPipeline:
             await status_callback("DeepResearch", self.model, "✅ Верификация фактов...")
         verification = await self._verify_facts(question, all_evidence)
 
-        # Step 4: Synthesize report with citations
+        # Step 4: Synthesize report with citations (token-budget guard applied inside)
         if status_callback:
             await status_callback("DeepResearch", self.model, "📝 Синтез отчёта...")
         report = await self._synthesize(question, all_evidence, verification)
@@ -425,6 +481,99 @@ class DeepResearchPipeline:
             return ""
 
     # ------------------------------------------------------------------
+    # Full-page content enrichment (v3 — fixes "agent blindness")
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_urls_from_search(search_results: List[Dict[str, str]]) -> List[str]:
+        """Extract unique URLs from DuckDuckGo search result strings."""
+        url_pattern = re.compile(r"https?://[^\s\)\]\"'<>]+")
+        seen: set = set()
+        urls: List[str] = []
+        for res in search_results:
+            web_text = res.get("web", "")
+            for url in url_pattern.findall(web_text):
+                # Strip a single trailing punctuation character that may appear
+                # at the end of a URL in plain text (e.g. sentence ending with a URL).
+                # Using re.sub instead of rstrip to avoid stripping valid path chars.
+                url = re.sub(r"[.,;:)\]]+$", "", url)
+                if url not in seen:
+                    seen.add(url)
+                    urls.append(url)
+        return urls
+
+    async def _fetch_page_content(self, url: str) -> str:
+        """Fetch full page content.
+
+        Priority:
+        1. Firecrawl API (if FIRECRAWL_API_KEY is configured) — headless browser,
+           returns clean Markdown, best for bot-protected/JS-heavy sites.
+        2. MCP web_fetch tool (Jina Reader → plain-HTTP fallback inside the MCP server).
+        3. Returns empty string on any failure.
+        """
+        if self._firecrawl_api_key:
+            content = await self._fetch_via_firecrawl(url)
+            if content and len(content) >= _MIN_USEFUL_CONTENT_CHARS:
+                return content
+
+        try:
+            result = await self.mcp_client.call_tool(
+                "web_fetch", {"url": url, "max_chars": _WEB_FETCH_REQUEST_CHARS}
+            )
+            if result and len(str(result)) >= _MIN_USEFUL_CONTENT_CHARS:
+                return str(result)
+        except Exception as e:
+            logger.debug("web_fetch failed", url=url, error=str(e))
+        return ""
+
+    async def _fetch_via_firecrawl(self, url: str) -> str:
+        """Fetch page content via Firecrawl API (headless browser, clean Markdown output)."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    _FIRECRAWL_API_URL,
+                    json={"url": url, "formats": ["markdown"]},
+                    headers={
+                        "Authorization": f"Bearer {self._firecrawl_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("data", {}).get("markdown", "")
+        except Exception as e:
+            logger.debug("Firecrawl fetch failed", url=url, error=str(e))
+        return ""
+
+    async def _enrich_with_full_content(
+        self, search_results: List[Dict[str, str]]
+    ) -> List[str]:
+        """Fetch full page text for the top-N URLs found in search results.
+
+        Returns a list of evidence strings in the format:
+            [Full page: <url>]\\n<content>
+        Only pages with sufficient content (>= _MIN_USEFUL_CONTENT_CHARS) are included.
+        Each chunk is capped at _MAX_ENRICHED_CONTENT_CHARS so multiple pages
+        fit comfortably within the token budget.
+        """
+        urls = self._extract_urls_from_search(search_results)
+        if not urls:
+            return []
+        # Fetch top-N pages in parallel
+        fetch_tasks = [self._fetch_page_content(url) for url in urls[:_MAX_PAGES_TO_FETCH]]
+        contents = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+        enriched: List[str] = []
+        for url, content in zip(urls[:_MAX_PAGES_TO_FETCH], contents):
+            if isinstance(content, Exception) or not content:
+                continue
+            if len(content) < _MIN_USEFUL_CONTENT_CHARS:
+                continue
+            enriched.append(f"[Full page: {url}]\n{content[:_MAX_ENRICHED_CONTENT_CHARS]}")
+        return enriched
+
+    # ------------------------------------------------------------------
     # Academic paper search (v2: connects deep research with parser)
     # ------------------------------------------------------------------
     async def _academic_search(self, query: str) -> str:
@@ -618,8 +767,13 @@ class DeepResearchPipeline:
     async def _synthesize(
         self, question: str, evidence: List[str], verification: str
     ) -> str:
-        """Synthesize evidence into a report with [N] source citations."""
-        evidence_text = "\n\n---\n\n".join(evidence)
+        """Synthesize evidence into a report with [N] source citations.
+
+        Token-budget guard: total evidence text is capped at _EVIDENCE_TOKEN_BUDGET_CHARS
+        to prevent context-window overflow on large research sessions.
+        """
+        # Apply token-budget guard: trim evidence to stay within LLM context limits
+        evidence_text = self._apply_token_budget(evidence)
         return await self._llm_call(
             system=(
                 "Ты — исследователь-аналитик. На основе собранных данных и результатов "
@@ -638,6 +792,29 @@ class DeepResearchPipeline:
             ),
             max_tokens=3072,
         )
+
+    @staticmethod
+    def _apply_token_budget(evidence: List[str]) -> str:
+        """Join evidence strings respecting the token-budget character cap.
+
+        Prioritises earlier (higher-scored) evidence and appends a truncation notice
+        (containing _TOKEN_BUDGET_TRUNCATION_NOTICE) so the LLM knows data was trimmed.
+        """
+        separator = "\n\n---\n\n"
+        budget = _EVIDENCE_TOKEN_BUDGET_CHARS
+        chunks: List[str] = []
+        used = 0
+        for chunk in evidence:
+            if used + len(chunk) + len(separator) > budget:
+                skipped = len(evidence) - len(chunks)
+                chunks.append(
+                    f"[{_TOKEN_BUDGET_TRUNCATION_NOTICE}: {skipped} evidence blocks omitted "
+                    f"— context budget {budget // 1000} k chars]"
+                )
+                break
+            chunks.append(chunk)
+            used += len(chunk) + len(separator)
+        return separator.join(chunks)
 
     # ------------------------------------------------------------------
     # Self-critique → revise cycle

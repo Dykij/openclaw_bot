@@ -11,6 +11,10 @@ from src.deep_research import (
     DeepResearchPipeline,
     _DEPTH_PROFILES,
     _CONFIDENCE_THRESHOLD,
+    _EVIDENCE_TOKEN_BUDGET_CHARS,
+    _MAX_PAGES_TO_FETCH,
+    _MIN_USEFUL_CONTENT_CHARS,
+    _TOKEN_BUDGET_TRUNCATION_NOTICE,
     EvidencePiece,
     ResearchState,
 )
@@ -394,6 +398,200 @@ def test_search_sub_query_includes_academic_field():
     result = asyncio.run(p._search_sub_query("test query"))
     assert "academic" in result
     print("[PASS] search_sub_query result includes academic field")
+
+
+# ---------------------------------------------------------------------------
+# V3: URL extraction
+# ---------------------------------------------------------------------------
+def test_extract_urls_from_search_finds_http_urls():
+    results = [
+        {"web": "1. **Title**\n   URL: https://example.com/article\n   snippet"},
+        {"web": "2. **Other**\n   URL: https://another.org/page\n   more text"},
+    ]
+    urls = DeepResearchPipeline._extract_urls_from_search(results)
+    assert "https://example.com/article" in urls
+    assert "https://another.org/page" in urls
+    print("[PASS] extract_urls_from_search finds URLs")
+
+
+def test_extract_urls_from_search_deduplicates():
+    results = [
+        {"web": "URL: https://dup.com URL: https://dup.com"},
+    ]
+    urls = DeepResearchPipeline._extract_urls_from_search(results)
+    assert urls.count("https://dup.com") == 1
+    print("[PASS] extract_urls_from_search deduplicates")
+
+
+def test_extract_urls_from_search_empty():
+    assert DeepResearchPipeline._extract_urls_from_search([]) == []
+    assert DeepResearchPipeline._extract_urls_from_search([{"web": "no urls here"}]) == []
+    print("[PASS] extract_urls_from_search handles empty/no-url input")
+
+
+# ---------------------------------------------------------------------------
+# V3: Token-budget guard
+# ---------------------------------------------------------------------------
+def test_apply_token_budget_no_truncation():
+    chunks = ["short chunk A", "short chunk B"]
+    result = DeepResearchPipeline._apply_token_budget(chunks)
+    assert "short chunk A" in result
+    assert "short chunk B" in result
+    print("[PASS] apply_token_budget passes small evidence unchanged")
+
+
+def test_apply_token_budget_truncates_large_evidence():
+    # Create evidence that clearly exceeds the budget
+    huge = ["x" * 10_000 for _ in range(20)]
+    result = DeepResearchPipeline._apply_token_budget(huge)
+    # Should contain the canonical truncation marker constant
+    assert _TOKEN_BUDGET_TRUNCATION_NOTICE in result
+    # Should still be within budget (plus the notice line itself)
+    assert len(result) <= _EVIDENCE_TOKEN_BUDGET_CHARS + 200
+    print("[PASS] apply_token_budget truncates over-budget evidence")
+
+
+def test_apply_token_budget_empty():
+    result = DeepResearchPipeline._apply_token_budget([])
+    assert result == ""
+    print("[PASS] apply_token_budget handles empty list")
+
+
+# ---------------------------------------------------------------------------
+# V3: web_fetch integration — _fetch_page_content
+# ---------------------------------------------------------------------------
+def test_fetch_page_content_uses_web_fetch_tool():
+    """_fetch_page_content should call the web_fetch MCP tool."""
+    p = _make_pipeline()
+    p.mcp_client.call_tool = AsyncMock(return_value="Full page markdown content here " * 10)
+    result = asyncio.run(p._fetch_page_content("https://example.com"))
+    assert "Full page markdown content" in result
+    # Verify web_fetch was called
+    p.mcp_client.call_tool.assert_called_once()
+    call_args = p.mcp_client.call_tool.call_args
+    assert call_args[0][0] == "web_fetch"
+    assert call_args[0][1]["url"] == "https://example.com"
+    print("[PASS] fetch_page_content uses web_fetch MCP tool")
+
+
+def test_fetch_page_content_returns_empty_on_thin_content():
+    """Short content (< _MIN_USEFUL_CONTENT_CHARS) is rejected."""
+    p = _make_pipeline()
+    p.mcp_client.call_tool = AsyncMock(return_value="tiny")
+    result = asyncio.run(p._fetch_page_content("https://example.com"))
+    assert result == ""
+    print("[PASS] fetch_page_content rejects thin content")
+
+
+def test_fetch_page_content_handles_mcp_error():
+    """MCP tool errors are handled gracefully."""
+    p = _make_pipeline()
+    p.mcp_client.call_tool = AsyncMock(side_effect=Exception("connection refused"))
+    result = asyncio.run(p._fetch_page_content("https://example.com"))
+    assert result == ""
+    print("[PASS] fetch_page_content handles MCP errors gracefully")
+
+
+# ---------------------------------------------------------------------------
+# V3: Full-content enrichment step
+# ---------------------------------------------------------------------------
+def test_enrich_with_full_content_fetches_pages():
+    """_enrich_with_full_content returns evidence strings for fetched pages."""
+    p = _make_pipeline()
+    # Simulate search results with URLs
+    search_results = [
+        {"web": "URL: https://good.com/article snippet", "memory": "", "query": "q1"},
+    ]
+    rich_content = "This is a detailed article about the topic. " * 20  # >200 chars
+    p._fetch_page_content = AsyncMock(return_value=rich_content)
+    result = asyncio.run(p._enrich_with_full_content(search_results))
+    assert len(result) >= 1
+    assert "https://good.com/article" in result[0]
+    assert "detailed article" in result[0]
+    print("[PASS] enrich_with_full_content fetches and includes page content")
+
+
+def test_enrich_with_full_content_no_urls():
+    """Returns empty list when search results contain no URLs."""
+    p = _make_pipeline()
+    search_results = [{"web": "no urls here at all", "memory": "", "query": "q1"}]
+    result = asyncio.run(p._enrich_with_full_content(search_results))
+    assert result == []
+    print("[PASS] enrich_with_full_content returns [] when no URLs found")
+
+
+def test_enrich_with_full_content_skips_thin_pages():
+    """Pages returning thin content are excluded from enriched evidence."""
+    p = _make_pipeline()
+    search_results = [
+        {"web": "URL: https://thin.com/page some snippet", "memory": "", "query": "q1"},
+    ]
+    p._fetch_page_content = AsyncMock(return_value="")  # empty = rejected
+    result = asyncio.run(p._enrich_with_full_content(search_results))
+    assert result == []
+    print("[PASS] enrich_with_full_content skips thin/empty pages")
+
+
+# ---------------------------------------------------------------------------
+# V3: Constants sanity checks
+# ---------------------------------------------------------------------------
+def test_v3_constants_exist_and_sane():
+    assert _EVIDENCE_TOKEN_BUDGET_CHARS > 10_000
+    assert 1 <= _MAX_PAGES_TO_FETCH <= 10
+    assert _MIN_USEFUL_CONTENT_CHARS >= 50
+    print("[PASS] V3 constants are sane")
+
+
+# ---------------------------------------------------------------------------
+# V3: Firecrawl provider (optional, disabled when no API key)
+# ---------------------------------------------------------------------------
+def test_firecrawl_not_used_when_no_api_key():
+    """Without FIRECRAWL_API_KEY, fetch_page_content goes straight to web_fetch."""
+    p = _make_pipeline()
+    assert p._firecrawl_api_key is None or p._firecrawl_api_key == ""
+    rich = "Content from jina reader. " * 20
+    p.mcp_client.call_tool = AsyncMock(return_value=rich)
+    result = asyncio.run(p._fetch_page_content("https://example.com"))
+    assert "Content from jina" in result
+    print("[PASS] Firecrawl skipped when no API key; web_fetch used instead")
+
+
+# ---------------------------------------------------------------------------
+# V3: Full pipeline includes enrichment step
+# ---------------------------------------------------------------------------
+def test_full_research_pipeline_v3():
+    """Integration test: v3 pipeline with mocked LLM, MCP, and page enrichment."""
+    responses = [
+        "medium",                           # _estimate_complexity
+        "sub query 1\nsub query 2",         # _decompose
+        "alt query 1\nalt query 2",         # _reformulate_queries
+        "1|8|Relevant\n2|6|Partially",      # _score_evidence
+        "none",                             # _detect_contradictions
+        "ФАКТ: X\nСТАТУС: ПОДТВЕРЖДЁН",   # _verify_facts
+        "# Отчёт\nФакт X подтверждён [1]\n\nИСТОЧНИКИ:\n[1] source",  # _synthesize
+        "none",                             # _self_critique
+        "0.85",                             # _estimate_confidence (adaptive stop)
+        "0.90",                             # _estimate_confidence (final calibration)
+        json.dumps({                        # _final_fact_check
+            "verified": ["X"],
+            "refuted": [],
+            "corrections": "",
+        }),
+    ]
+    p = _make_pipeline(llm_responses=responses)
+    # web_fetch returns thin content → enrichment step produces no extra evidence
+    p.mcp_client.call_tool = AsyncMock(return_value="mock search result")
+    callback = AsyncMock()
+
+    result = asyncio.run(p.research("What is X?", status_callback=callback))
+
+    assert "report" in result
+    assert "sources" in result
+    assert "confidence_score" in result
+    assert "evidence_count" in result
+    assert isinstance(result["confidence_score"], float)
+    assert callback.call_count >= 4
+    print("[PASS] v3 full research pipeline integration test")
 
 
 # ---------------------------------------------------------------------------
