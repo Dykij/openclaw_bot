@@ -73,7 +73,8 @@ class PipelineExecutor:
         # Roles prefixed with "Executor_" that are adjacent can be run in parallel
         self.default_chains = {
             "Dmarket": ["Planner", "Foreman", "Executor_API", "Executor_Parser", "Auditor", "Archivist"],
-            "OpenClaw": ["Planner", "Foreman", "Executor_Tools", "Executor_Architect", "Auditor", "Archivist"],
+            # OpenClaw: State_Manager added before Archivist to persist context to VectorDB
+            "OpenClaw": ["Planner", "Foreman", "Executor_Tools", "Executor_Architect", "Auditor", "State_Manager", "Archivist"],
         }
 
         # Context budget: max tokens per role input (system+user). If exceeded, compress.

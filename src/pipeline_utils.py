@@ -47,6 +47,12 @@ def clean_response_for_user(text: str) -> str:
     text = re.sub(r"\[ARCHIVIST PROTOCOL[^\]]*\][^\n]*\n?", "", text)
     # Remove [EXECUTOR PROTOCOL...] remnants
     text = re.sub(r"\[EXECUTOR PROTOCOL[^\]]*\][^\n]*\n?", "", text)
+    # Remove [ACTIVE AGENT PERSONA ...] blocks injected by agent_personas.py
+    text = re.sub(r"\[ACTIVE AGENT PERSONA[^\]]*\].*?\[END AGENT PERSONA\]\s*", "", text, flags=re.DOTALL)
+    # Remove [END AGENT PERSONA] if somehow left standalone
+    text = re.sub(r"\[END AGENT PERSONA\]\s*", "", text)
+    # Remove [USER REQUEST] section header
+    text = re.sub(r"\[USER REQUEST\]\s*", "", text)
     # Remove [RAG_CONFIDENCE: ...] tags (used internally by memory search)
     text = re.sub(r"\[RAG_CONFIDENCE:\s*\w+\]\s*", "", text)
     # Remove stray JSON tool-call artifacts outside code blocks

@@ -353,6 +353,15 @@ class OpenClawGateway:
                     "Persona active",
                     persona=self.persona_manager.active_persona(message.chat.id).name,
                 )
+            else:
+                # Auto-suggest: if no persona active, offer a relevant one silently in logs
+                # (don't interrupt the conversation flow — just log the suggestion)
+                suggestion = self.persona_manager.suggest_persona(prompt)
+                if suggestion:
+                    logger.info(
+                        "Persona auto-suggest (not activated)",
+                        suggestion=suggestion.slug,
+                    )
 
         # 2. Execute Pipeline (Chain-of-Agents) or Fast Path (single model)
         is_fast_path = (brigade == "General")
@@ -592,6 +601,9 @@ class OpenClawGateway:
                     BotCommand(command="help", description="Список всех команд"),
                     BotCommand(command="status", description="Статус системы"),
                     BotCommand(command="models", description="Список моделей"),
+                    BotCommand(command="agents", description="Список агентов-персон"),
+                    BotCommand(command="agent", description="Активировать агента: /agent <slug>"),
+                    BotCommand(command="research", description="Глубокое исследование"),
                     BotCommand(command="test", description="VRAM тест"),
                     BotCommand(command="test_all_models", description="Тест всех 20 ролей"),
                 ])

@@ -30,11 +30,15 @@ async def classify_intent(gateway, prompt: str) -> str:
         "buy", "sell", "dmarket", "trade", "price", "hft", "arbitrage",
         "купить", "продать", "торговля", "цена", "арбитраж", "дмаркет",
         "скин", "инвентарь", "skin", "inventory", "target", "spread",
+        "offer", "офер", "листинг", "listing", "profit", "профит",
     ]
     openclaw_keywords = [
         "config", "конфиг", "pipeline", "модел", "model", "vllm",
         "бригад", "brigade", "роль", "role", "mcp", "плагин", "plugin",
         "бот", "bot", "openclaw", "gateway", "память", "memory",
+        "агент", "agent", "persona", "персон", "debug", "отладк",
+        "тест", "test", "workflow", "воркфлоу", "pipeline", "пайплайн",
+        "research", "исследован", "ресёрч", "deep research",
     ]
     lower_prompt = prompt.lower()
     if any(kw in lower_prompt for kw in dmarket_keywords):

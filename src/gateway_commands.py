@@ -108,8 +108,13 @@ async def cmd_help(gateway, message: Message):
         "/status — Статус системы (vLLM, GPU, бригады)\n"
         "/models — Список моделей по бригадам\n"
         "/test — Запустить VRAM-тест\n"
-        "/test_all_models — Тест всех 20 ролей (10-20 мин)\n"
+        "/test\\_all\\_models — Тест всех 20 ролей (10-20 мин)\n"
         "/research — Глубокое исследование (web+memory)\n\n"
+        "🤖 *Агентские персоны:*\n"
+        "/agents — Список всех доступных агентов\n"
+        "/agent <slug> — Активировать агента (напр. `/agent code-reviewer`)\n"
+        "/agent info <slug> — Показать описание агента\n"
+        "/agent reset — Сбросить активного агента\n\n"
         "💬 *Текстовый запрос* — автоматически маршрутизируется\n"
         "в бригаду Dmarket или OpenClaw через Intent Classifier."
     )
@@ -127,11 +132,28 @@ async def cmd_start(gateway, message: Message):
         [InlineKeyboardButton(text="🔬 VRAM Тест", callback_data="cmd_test")]
     ])
 
+    # Collect unique model names from config for display
+    model_router = gateway.config.get("system", {}).get("model_router", {})
+    unique_models = list(dict.fromkeys(
+        m.split("/")[-1] for m in model_router.values() if m
+    ))
+    models_str = " / ".join(unique_models[:3]) if unique_models else "Qwen2.5-Coder-14B-AWQ"
+
+    # Agent persona info
+    persona_count = 0
+    active_persona_name = "—"
+    if gateway.persona_manager:
+        persona_count = len(gateway.persona_manager.registry.list_unique())
+        active = gateway.persona_manager.active_persona(message.chat.id)
+        if active:
+            active_persona_name = active.name
+
     await message.reply(
         "🦞 *OpenClaw v2026: Dual-Brigade Online*\n\n"
         f"🛠️ GPU: {gateway.config['system']['hardware']['target_gpu']}\n"
-        f"🧠 Модели: Llama-3.1-8B / DeepSeek-R1-8B / Gemma-3-12B / Qwen2.5-Coder-7B\n"
-        f"📡 vLLM: `{gateway.vllm_url}`\n\n"
+        f"🧠 Модели: `{models_str}`\n"
+        f"📡 vLLM: `{gateway.vllm_url}`\n"
+        f"🤖 Агент: {active_persona_name} ({persona_count} доступно)\n\n"
         "Выбери нужный раздел меню ниже или отправь задачу текстом для роутинга в бригаду.",
         parse_mode="Markdown",
         reply_markup=keyboard
