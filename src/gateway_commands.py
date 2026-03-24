@@ -355,3 +355,74 @@ async def handle_photo(gateway, message: Message):
                     await status_msg.edit_text(f"⚠️ Ошибка vLLM Vision ({resp.status})")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка обработки фото: {e}")
+
+
+
+# ---------------------------------------------------------------------------
+# Agent Persona Commands
+# ---------------------------------------------------------------------------
+
+async def cmd_agents(gateway, message: Message):
+    """List all available agent personas."""
+    if message.from_user.id != gateway.admin_id:
+        return
+    manager = getattr(gateway, "persona_manager", None)
+    if manager is None:
+        await message.reply("⚠️ Система агентов не инициализирована.")
+        return
+    await message.reply(manager.format_list(), parse_mode="Markdown")
+
+
+async def cmd_agent(gateway, message: Message):
+    """
+    Manage the active agent persona.
+
+    Usage:
+      /agent <slug>         — activate agent
+      /agent info <slug>    — show agent info
+      /agent reset          — deactivate current agent
+    """
+    if message.from_user.id != gateway.admin_id:
+        return
+    manager = getattr(gateway, "persona_manager", None)
+    if manager is None:
+        await message.reply("⚠️ Система агентов не инициализирована.")
+        return
+
+    raw = (message.text or "").strip()
+    # Strip the command prefix (e.g. "/agent" or "/agent@botname")
+    parts = raw.split(None, 1)
+    args = parts[1].strip() if len(parts) > 1 else ""
+
+    chat_id = message.chat.id
+
+    if not args or args == "list":
+        await message.reply(manager.format_list(), parse_mode="Markdown")
+        return
+
+    if args == "reset":
+        manager.deactivate(chat_id)
+        await message.reply("🔄 Агент деактивирован. Бот вернулся к стандартному режиму.")
+        return
+
+    if args.startswith("info "):
+        slug = args[5:].strip()
+        await message.reply(manager.format_info(slug), parse_mode="Markdown")
+        return
+
+    # Treat the argument as a slug to activate
+    slug = args.split()[0]
+    persona = manager.activate(chat_id, slug)
+    if persona:
+        await message.reply(
+            f"✅ Агент *{persona.name}* активирован\\!\n"
+            f"_{persona.description}_\n\n"
+            f"Все последующие запросы будут обрабатываться в роли этого агента\\.\n"
+            f"Для сброса: `/agent reset`",
+            parse_mode="MarkdownV2",
+        )
+    else:
+        await message.reply(
+            f"❌ Агент `{slug}` не найден\\. Используй `/agents` для списка доступных агентов\\.",
+            parse_mode="MarkdownV2",
+        )

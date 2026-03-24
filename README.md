@@ -14,8 +14,24 @@ OpenClaw has been evolved into the **Blackwell Core**, a streamlined, high-perfo
   - **SRE (Gromov):** System reliability and performance optimization.
   - **OSINT (Veremeev):** External data ingestion and threat analysis.
   - **TradeOps (Klimov):** High-frequency execution and risk management integration.
+- **Agent Persona System:** 13 curated expert roles across 7 professional divisions (Engineering, Design, Product, Testing, Marketing, Support, Project Management). Switch the bot's expertise on demand — see [docs/agents.md](docs/agents.md).
 - **Rust-Optimized Infrastructure:** Critical paths (checksums, data parsing) offloaded to native `rust_core` extensions.
 - **HMM Regime Engine:** Advanced Markov models for predictive market and system state transitions.
+
+## 🤖 Agent Persona System
+
+The bot can dynamically switch between specialised expert roles instead of acting as a generic assistant:
+
+```
+/agents                      — list all available personas
+/agent code-reviewer         — activate Code Reviewer persona
+/agent info backend-architect — show persona details
+/agent reset                 — return to default mode
+```
+
+Available divisions: **Engineering** (AI Engineer, Code Reviewer, Backend Architect, DevOps Automator, Security Engineer, Senior Developer) · **Design** (UX Architect, UI Designer, Image Prompt Engineer) · **Product** · **Testing** · **Marketing** · **Support** · **Project Management**
+
+Add custom personas by dropping a `.md` file into the `agents/` directory — see [docs/agents.md](docs/agents.md).
 
 ## 🛠 Project Separation
 

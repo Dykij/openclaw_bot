@@ -20,6 +20,8 @@ from watchdog.observers import Observer
 
 from src.archivist_telegram import TelegramArchivist
 from src.gateway_commands import (
+    cmd_agent,
+    cmd_agents,
     cmd_help,
     cmd_models,
     cmd_research,
@@ -31,6 +33,7 @@ from src.gateway_commands import (
     handle_photo,
     handle_unknown_command,
 )
+from src.agent_personas import AgentPersonaManager
 from src.intent_classifier import classify_intent
 from src.memory_gc import MemoryGarbageCollector
 from src.pipeline_executor import PipelineExecutor
@@ -137,6 +140,21 @@ class OpenClawGateway:
         self._intent_cache: dict = {}  # Simple cache for intent classification
         self.processed_task_hashes = set()
 
+        # Agent persona system — loads personas from agents/ at repo root
+        try:
+            self.persona_manager = AgentPersonaManager()
+            logger.info(
+                "Agent persona manager initialised",
+                count=len(self.persona_manager.registry.list_unique()),
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Agent persona manager failed to init (%s: %s). "
+                "Check that the agents/ directory exists and contains valid .md files.",
+                type(exc).__name__, exc,
+            )
+            self.persona_manager = None
+
         # Watchdog for Config
         self._observer = Observer()
         self._observer.schedule(
@@ -161,6 +179,8 @@ class OpenClawGateway:
         self.dp.message.register(lambda m: cmd_test(self, m), Command("test"))
         self.dp.message.register(lambda m: cmd_test_all_models(self, m), Command("test_all_models"))
         self.dp.message.register(lambda m: cmd_research(self, m), Command("research"))
+        self.dp.message.register(lambda m: cmd_agents(self, m), Command("agents"))
+        self.dp.message.register(lambda m: cmd_agent(self, m), Command("agent"))
         self.dp.message.register(lambda m: handle_photo(self, m), F.photo)
         
         # Заглушка для неизвестных команд
@@ -323,6 +343,17 @@ class OpenClawGateway:
         if not is_reply:
             brigade = await classify_intent(self, prompt)
 
+        # 1b. Agent persona augmentation — prepend active persona to prompt if set
+        augmented_prompt = prompt
+        if self.persona_manager:
+            augmentation = self.persona_manager.get_persona_augmentation(message.chat.id)
+            if augmentation:
+                augmented_prompt = f"{augmentation}\n\n[USER REQUEST]\n{prompt}"
+                logger.info(
+                    "Persona active",
+                    persona=self.persona_manager.active_persona(message.chat.id).name,
+                )
+
         # 2. Execute Pipeline (Chain-of-Agents) or Fast Path (single model)
         is_fast_path = (brigade == "General")
         actual_brigade = "OpenClaw" if is_fast_path else brigade
@@ -364,7 +395,7 @@ class OpenClawGateway:
 
         try:
             result = await self.pipeline.execute_stream(
-                prompt=prompt,
+                prompt=augmented_prompt,
                 brigade=actual_brigade,
                 status_callback=update_status,
                 task_type="general" if is_fast_path else None,
@@ -380,7 +411,7 @@ class OpenClawGateway:
             typing_task = asyncio.create_task(_keep_typing())
             try:
                 result = await self.pipeline.execute_stream(
-                    prompt=prompt,
+                    prompt=augmented_prompt,
                     brigade=actual_brigade,
                     status_callback=update_status,
                     task_type="general" if is_fast_path else None,
