@@ -317,22 +317,36 @@ class PromptInjectionDefender:
         re.compile(r"(?i)\{\{.*\}\}"),  # template injection
         re.compile(r"(?i)\$\{.*\}"),  # expression injection
         # Russian injection phrases
-        re.compile(r"(?i)(?:забудь|игнорируй|отмени)\s+(?:все\s+)?(?:предыдущие|прежние)\s+(?:инструкции|правила|указания)"),
+        re.compile(r"(?i)(?:забудь|игнорируй|отмени)\s+(?:все\s+)?(?:свои\s+|предыдущие\s+|прежние\s+)?(?:инструкции|правила|указания)"),
         re.compile(r"(?i)новые\s+инструкции\s*:"),
         re.compile(r"(?i)(?:покажи|выведи|напечатай)\s+(?:свой\s+)?(?:системный\s+)?(?:промпт|промт|инструкции)"),
+        re.compile(r"(?i)#{2,}\s*(?:OVERRIDE|SYSTEM|ADMIN|INJECT)\s*#{2,}"),  # delimiter-based injection
+        re.compile(r"(?i)(?:reveal|show|print|display)\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions?)"),
+        re.compile(r"<\|im_(?:start|end)\|>"),  # chat-template token smuggling
+        re.compile(r"(?i)\bJAILBREAK\b\s*:"),  # explicit jailbreak tag
+        re.compile(r"(?i)ignore\s+the\s+above\b"),  # conversation manipulation
+        re.compile(r"(?i)\\n\\n(?:Human|System|Assistant)\s*:"),  # injected chat turn
+        re.compile(r"(?i)(?:deceased|dead)\s+(?:grandmother|grandma|mother|father|relative)"),  # emotional manipulation
     ]
 
     JAILBREAK_PATTERNS = [
         re.compile(r"(?i)(?:DAN|do\s+anything\s+now)\s+mode"),
+        re.compile(r"(?i)you\s+are\s+(?:now\s+)?DAN\b"),
+        re.compile(r"(?i)\bdo\s+anything\s+now\b"),
         re.compile(r"(?i)(?:jailbreak|unlock|bypass)\s+(?:mode|filter|safety|restrictions?)"),
         re.compile(r"(?i)you\s+(?:can|must|should)\s+(?:now\s+)?(?:ignore|bypass|override)\s+(?:all\s+)?(?:safety|content|ethical)\s+(?:filters?|guidelines?|rules?)"),
-        re.compile(r"(?i)pretend\s+(?:you\s+(?:are|have)\s+)?(?:no|without)\s+(?:restrictions?|limits?|rules?)"),
+        re.compile(r"(?i)pretend\s+.*?(?:no|without)\s+(?:restrictions?|limits?|rules?)"),
+        re.compile(r"(?i)\bjailbroken?\b"),  # standalone jailbreak/jailbroken
         re.compile(r"(?i)(?:imagine|roleplay|act)\s+(?:as|like)\s+(?:an?\s+)?(?:evil|unrestricted|unfiltered|uncensored)"),
-        re.compile(r"(?i)developer\s+mode\s+(?:enabled|on|activated)"),
+        re.compile(r"(?i)developer\s+mode\b"),
+        re.compile(r"(?i)(?:all\s+)?safety\s+is\s+off\b"),
         re.compile(r"(?i)in\s+(?:a\s+)?hypothetical\s+(?:scenario|world)\s+where\s+(?:there\s+are\s+)?no\s+(?:rules|restrictions|limits)"),
+        re.compile(r"(?i)act\s+as\s+(?:my\s+)?(?:deceased|dead)\s+(?:grandmother|grandma|relative)"),  # social engineering
+        re.compile(r"(?i)(?:have\s+)?no\s+(?:rules|restrictions|limits)\b"),  # "you have no rules" / "no rules"
         # Russian jailbreak
         re.compile(r"(?i)(?:режим|мод)\s+(?:без\s+ограничений|разработчика|DAN)"),
         re.compile(r"(?i)(?:представь|притворись)\s+(?:что\s+)?(?:ты\s+)?(?:без|нет)\s+(?:ограничений|правил)"),
+        re.compile(r"(?i)ты\s+теперь\s+(?:злой|плохой|опасный|evil|без\s+(?:правил|ограничений))"),
     ]
 
     ENCODING_EVASION_PATTERNS = [

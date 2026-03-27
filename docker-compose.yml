@@ -21,6 +21,20 @@ services:
       - "127.0.0.1:6379:6379"
     restart: unless-stopped
 
+  # --- SUPERMEMORY RAG BACKEND ---
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb_rag
+    networks:
+      - bot_internal
+    ports:
+      - "127.0.0.1:8501:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+    restart: unless-stopped
+
   # --- ALERTING (READ-ONLY) ---
   telegram_observer:
     build: .
@@ -94,7 +108,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
@@ -125,7 +139,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     environment:
       - DOPPLER_TOKEN=${DOPPLER_TOKEN:-sandbox_token}
       - PAPER_TRADE_MODE=True
@@ -150,7 +164,7 @@ services:
   main_trading_engines:
     build: .
     # Starts trade_gate, markov_model, scanner_v3 logic
-    command: /opt/venv/bin/python3 src/main.py 
+    command: /opt/venv/bin/python3 src/main.py
     container_name: openclaw_factory
     runtime: runsc
     networks:
@@ -159,13 +173,19 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
+    depends_on:
+      - redis
+      - questdb
+      - chromadb
+    volumes:
+      - supermemory_data:/app/data/supermemory
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu] # Exposes Blackwell / RTX 5060 Ti
+              capabilities: [ gpu ] # Exposes Blackwell / RTX 5060 Ti
     environment:
       - PAPER_TRADE_MODE=True
       - LOG_LEVEL=DEBUG
@@ -196,7 +216,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
@@ -221,3 +241,5 @@ networks:
 
 volumes:
   questdb_data:
+  chromadb_data:
+  supermemory_data:

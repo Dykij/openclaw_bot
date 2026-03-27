@@ -25,10 +25,10 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
-    BrigadeApiError,
-    BrigadeClient,
-    type BrigadeExecuteRequest,
-    type BrigadeStreamEvent,
+  BrigadeApiError,
+  BrigadeClient,
+  type BrigadeExecuteRequest,
+  type BrigadeStreamEvent,
 } from "../brigade-client.js";
 
 const BRIGADE_PREFIX = "/brigade";
@@ -104,7 +104,9 @@ export function createBrigadeHttpHandler(
     res: ServerResponse,
     requestPath: string,
   ): Promise<boolean> {
-    if (!requestPath.startsWith(BRIGADE_PREFIX)) return false;
+    if (!requestPath.startsWith(BRIGADE_PREFIX)) {
+      return false;
+    }
 
     const method = (req.method ?? "GET").toUpperCase();
 

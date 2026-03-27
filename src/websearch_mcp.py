@@ -19,7 +19,7 @@ import urllib.parse
 from typing import Any
 
 from mcp.server import Server
-from mcp.server.stdio import run_server
+from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 try:
@@ -268,7 +268,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 async def main():
-    await run_server(server)
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
 if __name__ == "__main__":

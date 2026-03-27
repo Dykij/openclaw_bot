@@ -9,7 +9,7 @@ Modules under test
 1. src.agent_reasoning
 2. src.memory_enhanced
 3. src.research_enhanced
-4. src.inference_optimizer
+4. src.ai.inference (SmartModelRouter, Budget, Metrics, etc.)
 """
 
 import asyncio
@@ -24,7 +24,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # 1. agent_reasoning  (dataclasses + ToolLearningTracker only — no LLM)
 # ---------------------------------------------------------------------------
-from src.agent_reasoning import (
+from src.ai.agents import (
     ConstitutionalChecker,
     ConstitutionalResult,
     EvaluationResult,
@@ -68,7 +68,7 @@ from src.research_enhanced import (
 # ---------------------------------------------------------------------------
 # 5. inference_optimizer
 # ---------------------------------------------------------------------------
-from src.inference_optimizer import (
+from src.ai.inference import (
     AdaptiveTokenBudget,
     BatchMetrics,
     DynamicBatchScheduler,

@@ -5,6 +5,7 @@ prompt building, and chain grouping.
 Extracted from pipeline_executor.py for modularity.
 """
 
+import json
 import os
 import re
 
@@ -47,6 +48,10 @@ def clean_response_for_user(text: str) -> str:
     text = re.sub(r"\[ARCHIVIST PROTOCOL[^\]]*\][^\n]*\n?", "", text)
     # Remove [EXECUTOR PROTOCOL...] remnants
     text = re.sub(r"\[EXECUTOR PROTOCOL[^\]]*\][^\n]*\n?", "", text)
+    # Remove agent persona markers injected by AgentPersonaManager
+    text = re.sub(r"\[ACTIVE AGENT PERSONA[^\]]*\][^\n]*\n?", "", text)
+    text = re.sub(r"\[END AGENT PERSONA\]\s*", "", text)
+    text = re.sub(r"\[USER REQUEST\]\s*", "", text)
     # Remove [RAG_CONFIDENCE: ...] tags (used internally by memory search)
     text = re.sub(r"\[RAG_CONFIDENCE:\s*\w+\]\s*", "", text)
     # Remove stray JSON tool-call artifacts outside code blocks
@@ -162,6 +167,27 @@ def emergency_compress(step_prompt: str, ctx_threshold: int, role_name: str) -> 
     return clean_ctx + "\n\n" + original_task
 
 
+def compress_for_model_swap(steps_results: list, accumulated_context: str = "", max_tokens: int = 800) -> str:
+    """Aggressive compression for cross-model context transfer.
+
+    Produces a structured JSON string that both Qwen and DeepSeek can parse
+    efficiently, preserving only actionable information.
+    """
+    structured = {
+        "chain_so_far": [
+            {"role": r.get("role", "?"), "key_output": r.get("response", "")[:200]}
+            for r in steps_results[-5:]  # last 5 steps max
+        ],
+        "final_context": steps_results[-1].get("response", "")[:500] if steps_results else "",
+    }
+    raw = json.dumps(structured, ensure_ascii=False)
+    # Enforce token budget (~4 chars per token)
+    char_limit = max_tokens * 4
+    if len(raw) > char_limit:
+        raw = raw[:char_limit - 3] + "..."
+    return raw
+
+
 def sanitize_file_content(content: str) -> str:
     """Strip potential prompt injection markers from file content before prompt injection."""
     content = re.sub(r'(?i)\[?(system|user|assistant)\s*(prompt|message|role)\]?\s*:', '', content)
@@ -170,52 +196,121 @@ def sanitize_file_content(content: str) -> str:
     return content
 
 
+# Static protocol fragments — kept as module-level constants so vLLM prefix caching
+# can reuse KV-cache across requests that share the same system prompt prefix.
+_ARCHIVIST_PROTOCOL = (
+    "\n\n[ARCHIVIST PROTOCOL: CRITIC + FORMATTER]"
+    "\nТы получаешь технический вывод от предыдущего агента."
+    "\nТвоя задача — ВЕРИФИЦИРОВАТЬ и ПЕРЕПИСАТЬ его в чистый, человекочитаемый формат."
+    "\n"
+    "\nФАЗА 1 — ВЕРИФИКАЦИЯ (Скептический критик):"
+    "\n- Проверь ответ на ВНУТРЕННИЕ ПРОТИВОРЕЧИЯ (одно утверждение опровергает другое)."
+    "\n- Проверь на ФАБРИКАЦИИ: конкретные цифры, даты, имена — есть ли основания в контексте?"
+    "\n- Проверь на TOOL BYPASS: если агент описывает 'я бы выполнил команду...' вместо реального результата — отметь как непроверенное."
+    "\n- Если факт НЕ подкреплён данными из контекста, УДАЛИ его, а не передавай пользователю."
+    "\n"
+    "\nФАЗА 2 — ФОРМАТИРОВАНИЕ:"
+    "\n- Удали ВСЮ служебную разметку: SITUATION, TASK, ACTION, RESULT, <think> блоки, [MCP...], [Proof of Work...]."
+    "\n- НЕ добавляй вступлений ('Давайте рассмотрим...', 'Представляет собой...')."
+    "\n- Каждое предложение = конкретный ВЕРИФИЦИРОВАННЫЙ факт или вывод."
+    "\n- Пиши на РУССКОМ ЯЗЫКЕ."
+    "\n- Формат: прямой ответ на вопрос пользователя, без мета-комментариев."
+    "\n"
+    "\nФАЗА 3 — ОЦЕНКА УВЕРЕННОСТИ:"
+    "\n- В САМОМ КОНЦЕ ответа добавь тег: [УВЕРЕННОСТЬ: X/10]"
+    "\n  где X — твоя оценка достоверности финального ответа (10 = абсолютно уверен, подтверждено данными; 1 = полная догадка)."
+    "\n- Если X < 7, ПЕРЕД основным ответом добавь: '⚠️ Ответ может содержать неточности — данные частично не подтверждены.'"
+    "\n- Оценивай честно: непроверенные факты = низкая оценка."
+)
+
+_EXECUTOR_PROTOCOL = (
+    "\n\n[EXECUTOR PROTOCOL — ReAct + Tool-Use]"
+    "\nВыполняй задачу точно по инструкции. Результат — только JSON или код."
+    "\nНикаких пояснений, вступлений, заключений."
+    "\n"
+    "\n[REASONING DISCIPLINE]"
+    "\n- Перед каждым действием формулируй Thought: что и зачем делаешь."
+    "\n- Action: выбирай ОДИН инструмент из доступных. Не выдумывай инструменты."
+    "\n- Action Input: строго JSON с параметрами. Без лишнего текста."
+    "\n- Если результат неожиданный — переформулируй план (Reflexion), не повторяй то же действие."
+    "\n"
+    "\n[TOOL SELECTION]"
+    "\n- Прочитай описание каждого доступного инструмента."
+    "\n- Выбирай инструмент, максимально соответствующий задаче."
+    "\n- При sandbox_execute: генерируй минимальный код, проверяй успешность по exit_code."
+    "\n- При ошибке sandbox: проанализируй stderr, исправь код и повтори (макс. 3 попытки)."
+    "\nЯзык ответа: РУССКИЙ."
+)
+
+_AUDITOR_PROTOCOL = (
+    "\n\n[AUDITOR PROTOCOL — REFLEXION + SELF-REFLECTION]"
+    "\nТы — критический рецензент. Прежде чем выдать финальный вердикт, выполни внутреннюю проверку:"
+    "\n"
+    "\n<self_check>"
+    "\n1. Решена ли задача пользователя ПОЛНОСТЬЮ? Нет ли пропущенных требований?"
+    "\n2. Есть ли фактические ошибки или противоречия в ответе предыдущих агентов?"
+    "\n3. Код (если есть) — синтаксически корректен, безопасен, без hardcoded секретов?"
+    "\n4. Ответ соответствует ВСЕМ требованиям исходного запроса?"
+    "\n5. Нет ли галлюцинаций — ссылок на несуществующие файлы, API, библиотеки?"
+    "\n6. Были ли неэффективные траектории? (одни и те же действия повторялись без прогресса)"
+    "\n7. Не пропущен ли этап декомпозиции задачи на подзадачи (если задача сложная)?"
+    "\n</self_check>"
+    "\n"
+    "\n[REFLEXION]"
+    "\nЕсли verdict != pass, сформулируй конкретное reflection:"
+    "\n- Что именно пошло не так в цепочке агентов?"
+    "\n- Какое альтернативное действие привело бы к успеху?"
+    "\n- Запиши reflection для использования в следующих итерациях."
+    "\n"
+    "\nПосле self_check и reflexion выдай вердикт в формате:"
+    "\n- verdict: pass | fail | partial"
+    "\n- issues: список обнаруженных проблем (пустой при pass)"
+    "\n- reflection: что нужно изменить в стратегии (пустое при pass)"
+    "\n- suggestions: конкретные предложения по улучшению"
+    "\n- summary: краткое резюме проверки"
+    "\nЯзык ответа: РУССКИЙ."
+)
+
+
 def build_role_prompt(role_name: str, role_config: dict, framework_root: str, task_type: str = None) -> str:
     """Build the system prompt for a given pipeline role with protocol injections."""
     if task_type:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         return (
-            "Ты — универсальный ИИ-ассистент OpenClaw. Отвечай на вопрос пользователя "
-            "кратко (2-5 предложений), точно и на РУССКОМ ЯЗЫКЕ.\n"
-            "Если вопрос простой (математика, факт, определение) — давай прямой ответ без рассуждений.\n"
-            "НЕ используй служебные метки (STAR, SITUATION и т.д.). НЕ описывай свои возможности."
+            f"Текущее дата и время: {now}.\n"
+            "Ты — универсальный ИИ-ассистент бота OpenClaw (мульти-агентный фреймворк для разработки).\n"
+            "Отвечай точно и на РУССКОМ ЯЗЫКЕ.\n\n"
+            "ПРАВИЛА:\n"
+            "1. Если запрос неясен, неполон или требует уточнения — верни ТОЛЬКО JSON:\n"
+            '   {"action": "ask_user", "question": "твой уточняющий вопрос"}\n'
+            "   Задавай не более ОДНОГО вопроса. Без лишнего текста вокруг JSON.\n"
+            "2. Если вопрос конкретный — давай прямой ответ (2-5 предложений).\n"
+            "3. Если информации нет или ты не уверен — честно скажи об этом. НЕ выдумывай факты.\n"
+            "4. НЕ используй метки STAR/SITUATION/ACTION. НЕ описывай свои возможности без запроса.\n"
+            "5. Текущее время уже известно из первой строки — используй его если нужно."
         )
 
     system_prompt = role_config.get("system_prompt", "You are an AI assistant.")
 
     is_planner = "Planner" in role_name or "Orchestrator" in role_name or "Foreman" in role_name
     is_archivist = "Archivist" in role_name
+    is_auditor = "Auditor" in role_name
 
     if is_archivist:
-        system_prompt += (
-            "\n\n[ARCHIVIST PROTOCOL: CRITIC + FORMATTER]"
-            "\nТы получаешь технический вывод от предыдущего агента."
-            "\nТвоя задача — ВЕРИФИЦИРОВАТЬ и ПЕРЕПИСАТЬ его в чистый, человекочитаемый формат."
-            "\n"
-            "\nФАЗА 1 — ВЕРИФИКАЦИЯ (Скептический критик):"
-            "\n- Проверь ответ на ВНУТРЕННИЕ ПРОТИВОРЕЧИЯ (одно утверждение опровергает другое)."
-            "\n- Проверь на ФАБРИКАЦИИ: конкретные цифры, даты, имена — есть ли основания в контексте?"
-            "\n- Проверь на TOOL BYPASS: если агент описывает 'я бы выполнил команду...' вместо реального результата — отметь как непроверенное."
-            "\n- Если факт НЕ подкреплён данными из контекста, УДАЛИ его, а не передавай пользователю."
-            "\n"
-            "\nФАЗА 2 — ФОРМАТИРОВАНИЕ:"
-            "\n- Удали ВСЮ служебную разметку: SITUATION, TASK, ACTION, RESULT, <think> блоки, [MCP...], [Proof of Work...]."
-            "\n- НЕ добавляй вступлений ('Давайте рассмотрим...', 'Представляет собой...')."
-            "\n- Каждое предложение = конкретный ВЕРИФИЦИРОВАННЫЙ факт или вывод."
-            "\n- Пиши на РУССКОМ ЯЗЫКЕ."
-            "\n- Формат: прямой ответ на вопрос пользователя, без мета-комментариев."
-            "\n"
-            "\nФАЗА 3 — ОЦЕНКА УВЕРЕННОСТИ:"
-            "\n- В САМОМ КОНЦЕ ответа добавь тег: [УВЕРЕННОСТЬ: X/10]"
-            "\n  где X — твоя оценка достоверности финального ответа (10 = абсолютно уверен, подтверждено данными; 1 = полная догадка)."
-            "\n- Если X < 7, ПЕРЕД основным ответом добавь: '⚠️ Ответ может содержать неточности — данные частично не подтверждены.'"
-            "\n- Оценивай честно: непроверенные факты = низкая оценка."
-        )
+        system_prompt += _ARCHIVIST_PROTOCOL
+    elif is_auditor:
+        system_prompt += _AUDITOR_PROTOCOL
     elif is_planner:
         os_name = "Windows" if os.name == "nt" else "Linux"
         system_prompt += (
             "\n\n[AGENT PROTOCOL: STAR-STRATEGY — INTERNAL ONLY]"
             "\n1. Memory Bank: Use .memory-bank for persistence."
             "\n2. Tooling: Если для ответа нужны данные из файловой системы, НЕМЕДЛЕННО вызывай доступные инструменты (list_directory, read_file). НЕ описывай, что ты хочешь вызвать — ВЫЗЫВАЙ."
+            "\n   КОМАНДЫ В ТЕРМИНАЛЕ: Ты можешь запускать shell-команды САМОСТОЯТЕЛЬНО через инструмент run_command(command='...', workdir='.', timeout=30). "
+            "Примеры: npx clawhub@latest install sonoscli, pnpm dlx ..., node --version. "
+            "НЕ ПРОСИ пользователя выполнять команды — запускай их сам через run_command. "
+            "Если команда завершилась ошибкой — прочитай stdout/stderr и реши проблему самостоятельно."
             "\n3. STAR используй ТОЛЬКО внутри тегов <think>...</think> для структурирования рассуждений."
             "\n4. Финальный ответ (вне <think>) должен быть ЧИСТЫМ текстом для пользователя:"
             "\n   - БЕЗ меток SITUATION/TASK/ACTION/RESULT"
@@ -225,7 +320,7 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
             "\n5. ЗАПРЕЩЁННЫЕ конструкции: 'Представляет собой...', 'Является эффективной...', 'Для конкретных рекомендаций необходимо...'"
             "\n6. SCOPE LIMITATION: Объясняй только четко установленные факты из контекста и доступных данных. Если ты НЕ УВЕРЕН — скажи 'недостаточно данных' вместо домысливания. Пропускай спорные или непроверенные области."
             "\n7. ВАЖНО: Весь ответ на РУССКОМ ЯЗЫКЕ."
-            f"\n8. СИСТЕМНАЯ СРЕДА: Бот работает на {os_name}. Инструменты доступны через MCP. НЕ предлагай прямые shell-команды (grep, tree, cat) — вызывай MCP-инструменты: list_directory, read_file, search_memory."
+            f"\n8. СИСТЕМНАЯ СРЕДА: Бот работает на {os_name}. Инструменты доступны через MCP. Для выполнения команд в терминале используй run_command — внутри бота есть shell-агент. НЕ проси пользователя запускать команды вручную."
         )
 
         # Inject BRAIN.md for Planners
@@ -239,12 +334,6 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
             except Exception as e:
                 logger.warning(f"Failed to read BRAIN.md: {e}")
     else:
-        # Executors and other roles: minimal protocol
-        system_prompt += (
-            "\n\n[EXECUTOR PROTOCOL]"
-            "\nВыполняй задачу точно по инструкции. Результат — только JSON или код."
-            "\nНикаких пояснений, вступлений, заключений."
-            "\nЯзык ответа: РУССКИЙ."
-        )
+        system_prompt += _EXECUTOR_PROTOCOL
 
     return system_prompt

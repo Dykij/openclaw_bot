@@ -17,12 +17,13 @@ LoRA adapters are stored at /mnt/d/lora_adapters.
 
 import asyncio
 import os
+import shlex
 import time
 from typing import Optional
 
 import aiohttp
 import structlog
-from src.inference_optimizer import (
+from src.ai.inference import (
     ChunkedPrefillConfig,
     PrefixCachingConfig,
     SpeculativeDecodingConfig,
@@ -36,6 +37,62 @@ WSL_DISTRO = "Ubuntu"
 WSL_VENV_PYTHON = "/mnt/d/vllm_env/bin/python3"
 WSL_HF_HOME = "/mnt/d/vllm_models"
 WSL_LORA_DIR = "/mnt/d/lora_adapters"
+
+
+def _running_in_wsl() -> bool:
+    """Detect if we are running inside WSL (Linux on Windows)."""
+    return os.environ.get("WSL_ENV") == "1" or os.path.exists("/proc/version") and (
+        "microsoft" in open("/proc/version").read().lower()
+        if os.path.exists("/proc/version") else False
+    )
+
+
+def _wsl_cmd(*args: str) -> list[str]:
+    """Return shell command list. Inside WSL, skip the 'wsl -d Ubuntu' wrapper."""
+    if _running_in_wsl():
+        # We are already inside Ubuntu WSL — run bash directly
+        return ["bash", "-c", args[-1]] if args else ["bash"]
+    return ["wsl", "-d", WSL_DISTRO, "--"] + list(args)
+
+# Models that do NOT support tool-calling.
+# Passing --enable-auto-tool-choice / --tool-call-parser to these causes vLLM
+# to exit with code 2 (argparse error / capability check).
+_NO_TOOL_CALL_MODELS: frozenset[str] = frozenset({
+    "deepseek-r1",
+    "deepseek-r1-distill",
+    "casperhansen/deepseek",
+})
+
+# CLI flags that must be stripped together with their value argument
+_TOOL_CALL_FLAGS: frozenset[str] = frozenset({
+    "--enable-auto-tool-choice",
+    "--tool-call-parser",
+})
+
+
+def _filter_args_for_model(extra_args: list[str], model_name: str) -> list[str]:
+    """Remove tool-call CLI flags for models that don't support them.
+
+    DeepSeek-R1 variants lack a tool-calling head; vLLM rejects
+    ``--enable-auto-tool-choice`` / ``--tool-call-parser`` for those models
+    and exits with code 2. This filter omits those flags (plus their values)
+    when the model name matches a known incompatible pattern.
+    """
+    model_lower = model_name.lower()
+    if not any(pat in model_lower for pat in _NO_TOOL_CALL_MODELS):
+        return extra_args  # model supports tool-calling — keep all args
+
+    filtered: list[str] = []
+    skip_next = False
+    for arg in extra_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in _TOOL_CALL_FLAGS:
+            skip_next = True  # also drop the value that follows
+            continue
+        filtered.append(arg)
+    return filtered
 
 
 class VLLMModelManager:
@@ -147,10 +204,16 @@ class VLLMModelManager:
             logger.warning("Inference liveness probe error", error=str(e))
             return False
 
-    async def ensure_model_loaded(self, model_name: str) -> None:
+    async def ensure_model_loaded(
+        self, model_name: str, pre_swap_callback=None, post_swap_callback=None,
+    ) -> None:
         """
         Ensure the specified model is loaded and ready for inference.
         If a different model is running, swaps to the new one.
+
+        Args:
+            pre_swap_callback: async callable(current_model, target_model) called before stop.
+            post_swap_callback: async callable(target_model) called after server is ready.
         """
         async with self._lock:
             if self.current_model == model_name and self.is_running and self._healthy:
@@ -162,9 +225,13 @@ class VLLMModelManager:
                     current=self.current_model,
                     target=model_name,
                 )
+                if pre_swap_callback and self.current_model:
+                    await pre_swap_callback(self.current_model, model_name)
                 await self._stop_server()
                 await self._start_server(model_name)
                 self.current_model = model_name
+                if post_swap_callback:
+                    await post_swap_callback(model_name)
 
     async def _start_server(self, model_name: str) -> None:
         """Start vLLM server in WSL with the specified model."""
@@ -183,12 +250,15 @@ class VLLMModelManager:
         if self.quantization:
             vllm_args.extend(["--quantization", self.quantization])
 
-        vllm_args.extend(self.vllm_extra_args)
+        # Strip tool-call flags for models that don't support them (e.g. DeepSeek-R1).
+        # Passing these flags to an incompatible model causes vLLM exit code 2.
+        vllm_args.extend(_filter_args_for_model(self.vllm_extra_args, model_name))
 
         # Build the bash command to run inside WSL
         # Redirect stdout/stderr to log file to prevent pipe buffer deadlock
         # (vLLM produces megabytes of output during torch.compile / CUDA graph capture)
-        args_str = " ".join(vllm_args)
+        # Use shlex.quote per arg so JSON values (e.g. --speculative-config) survive bash
+        args_str = " ".join(shlex.quote(a) for a in vllm_args)
         log_path = f"{WSL_HF_HOME}/vllm_server.log"
         bash_cmd = f"export HF_HOME={WSL_HF_HOME} && {args_str} > {log_path} 2>&1"
 
@@ -196,7 +266,7 @@ class VLLMModelManager:
         self._healthy = False
 
         self._process = await asyncio.create_subprocess_exec(
-            "wsl", "-d", WSL_DISTRO, "--", "bash", "-c", bash_cmd,
+            *_wsl_cmd("bash", "-c", bash_cmd),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -221,8 +291,8 @@ class VLLMModelManager:
         try:
             # Kill vLLM processes inside WSL
             kill_proc = await asyncio.create_subprocess_exec(
-                "wsl", "-d", WSL_DISTRO, "--", "bash", "-c",
-                "pkill -f 'vllm.entrypoints' 2>/dev/null; sleep 1; pkill -9 -f 'vllm.entrypoints' 2>/dev/null",
+                *_wsl_cmd("bash", "-c",
+                    "pkill -f 'vllm.entrypoints' 2>/dev/null; sleep 1; pkill -9 -f 'vllm.entrypoints' 2>/dev/null"),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -245,6 +315,27 @@ class VLLMModelManager:
         # Brief pause to let the GPU release VRAM
         await asyncio.sleep(2)
 
+        # Wait for port to be fully released (TCP TIME_WAIT)
+        await self._wait_for_port_free()
+
+    async def _wait_for_port_free(self, timeout: int = 15) -> None:
+        """Wait until the vLLM port is no longer bound in WSL."""
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *_wsl_cmd("bash", "-c", f"! ss -tlnp 2>/dev/null | grep -q ':{self.port} '"),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                rc = await asyncio.wait_for(proc.wait(), timeout=5)
+                if rc == 0:
+                    return  # Port is free
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+        logger.warning("Port still bound after timeout — proceeding anyway", port=self.port)
+
     async def _wait_for_ready(self, model_name: str) -> None:
         """Poll the /v1/models endpoint until the server is ready."""
         start = time.monotonic()
@@ -257,8 +348,7 @@ class VLLMModelManager:
                 log_tail = ""
                 try:
                     tail_proc = await asyncio.create_subprocess_exec(
-                        "wsl", "-d", WSL_DISTRO, "--", "tail", "-n", "20",
-                        f"{WSL_HF_HOME}/vllm_server.log",
+                        *_wsl_cmd("bash", "-c", f"tail -n 20 {WSL_HF_HOME}/vllm_server.log"),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.DEVNULL,
                     )
@@ -384,6 +474,9 @@ class VLLMModelManager:
         if self.quantization:
             vllm_args.extend(["--quantization", self.quantization])
 
+        # Strip tool-call flags for models that don't support them (e.g. DeepSeek-R1).
+        filtered_extra = _filter_args_for_model(self.vllm_extra_args, model_name)
+
         # LoRA adapter support
         if lora_adapter_path:
             adapter_name = os.path.basename(lora_adapter_path.rstrip("/"))
@@ -398,7 +491,7 @@ class VLLMModelManager:
                 adapter_path=lora_adapter_path,
             )
 
-        vllm_args.extend(self.vllm_extra_args)
+        vllm_args.extend(filtered_extra)
 
         args_str = " ".join(vllm_args)
         log_path = f"{WSL_HF_HOME}/vllm_server.log"
@@ -413,7 +506,7 @@ class VLLMModelManager:
         self._healthy = False
 
         self._process = await asyncio.create_subprocess_exec(
-            "wsl", "-d", WSL_DISTRO, "--", "bash", "-c", bash_cmd,
+            *_wsl_cmd("bash", "-c", bash_cmd),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )

@@ -1,0 +1,1 @@
+error: could not remove 'setup' file: 'C:\Users\west2\.cargo\bin/rustup-init.exe': Отказано в доступе. (os error 5)

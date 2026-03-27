@@ -1,10 +1,11 @@
 import asyncio
-import atexit
 import json
 import os
 import sys
 import time
-from typing import Optional
+
+from dotenv import load_dotenv
+load_dotenv()
 
 import structlog
 from aiogram import Bot, Dispatcher, F
@@ -14,95 +15,46 @@ from aiogram.types import (
     ForceReply,
     Message,
 )
-from prometheus_client import Counter, Gauge, start_http_server
-from watchdog.events import FileSystemEventHandler
+from prometheus_client import start_http_server
 from watchdog.observers import Observer
 
 from src.archivist_telegram import TelegramArchivist
-from src.gateway_commands import (
+from src.boot import (
+    PROMPT_COUNTER,
+    ConfigReloader,
+    acquire_lock,
+    configure_llm_and_pipeline,
+    release_lock,
+    setup_structlog,
+)
+from src.bot_commands import (
+    cmd_agent,
+    cmd_agents,
     cmd_help,
+    cmd_history,
     cmd_models,
+    cmd_openrouter_test,
+    cmd_perf,
     cmd_research,
     cmd_start,
     cmd_status,
+    cmd_tailscale,
     cmd_test,
     cmd_test_all_models,
     handle_callback_query,
+    handle_document,
     handle_photo,
     handle_unknown_command,
+    handle_voice,
 )
+from src.tailscale_monitor import TailscaleMonitor
 from src.intent_classifier import classify_intent
 from src.memory_gc import MemoryGarbageCollector
 from src.pipeline_executor import PipelineExecutor
+from src.safety_guardrails import HallucinationDetector, PromptInjectionDefender
 
-# Prometheus metrics
-PROMPT_COUNTER = Counter("openclaw_prompts_total", "Total prompts received")
-VRAM_GAUGE = Gauge("openclaw_vram_usage_mb", "Estimated VRAM usage")
-MODEL_LOAD_GAUGE = Gauge("openclaw_model_loaded", "Is a model currently loaded")
-
-# Structured Logging Setup
-structlog.configure(
-    processors=[
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.dict_tracebacks,
-        structlog.processors.JSONRenderer(),
-    ],
-    logger_factory=structlog.PrintLoggerFactory(),
-)
+setup_structlog()
 logger = structlog.get_logger("OpenClawGateway")
-
-
-class ConfigReloader(FileSystemEventHandler):
-    def __init__(self, callback):
-        self.callback = callback
-
-    def on_modified(self, event):
-        if event.src_path.endswith("config/openclaw_config.json"):
-            logger.info("Config changed, reloading...")
-            self.callback()
-
-
-LOCK_FILE = "/tmp/openclaw_bot.lock"
-
-
-def acquire_lock():
-    """Prevent multiple bot instances from running."""
-    if os.path.exists(LOCK_FILE):
-        try:
-            with open(LOCK_FILE, "r") as f:
-                old_pid = int(f.read().strip())
-
-            try:
-                import psutil
-
-                if psutil.pid_exists(old_pid):
-                    print(f"❌ Bot is already running (PID {old_pid})! Exiting.")
-                    sys.exit(1)
-            except ImportError:
-                # UNIX fallback
-                try:
-                    os.kill(old_pid, 0)
-                    print(f"❌ Bot is already running (PID {old_pid})! Exiting.")
-                    sys.exit(1)
-                except OSError:
-                    pass
-            print(f"⚠️ Stale lock file found (PID {old_pid} dead). Removing...")
-        except (ValueError, FileNotFoundError):
-            pass
-
-    with open(LOCK_FILE, "w") as f:
-        f.write(str(os.getpid()))
-    atexit.register(release_lock)
-
-
-def release_lock():
-    """Remove lock file on exit."""
-    try:
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
-    except OSError:
-        pass
 
 
 # Removed old logging setup
@@ -112,22 +64,39 @@ class OpenClawGateway:
     def __init__(self, config_path: str = "config/openclaw_config.json"):
         self.config_path = config_path
         with open(config_path, "r", encoding="utf-8") as f:
-            self.config = json.load(f)
+            self.config = json.loads(os.path.expandvars(f.read()))
 
         self.bot_token = self.config["system"]["telegram"]["bot_token"]
         self.admin_id = int(self.config["system"]["telegram"]["admin_chat_id"])
         self.vllm_url = self.config["system"].get("vllm_base_url", "http://localhost:8000/v1")
 
-        # Initialize vLLM model manager for dynamic model swapping
-        from src.vllm_manager import VLLMModelManager
+        # Initialize vLLM model manager ONLY when local models are enabled.
+        # Cloud-Only mode (use_local_models=false) skips all vLLM/WSL setup.
         vllm_cfg = self.config["system"]
-        self.vllm_manager = VLLMModelManager(
-            port=vllm_cfg.get("vllm_port", 8000),
-            gpu_memory_utilization=vllm_cfg.get("vllm_gpu_memory_utilization", 0.90),
-            max_model_len=vllm_cfg.get("vllm_max_model_len", 8192),
-            quantization=vllm_cfg.get("vllm_quantization"),
-            vllm_extra_args=vllm_cfg.get("vllm_extra_args"),
+        or_cfg = vllm_cfg.get("openrouter", {})
+        self._use_local_models = or_cfg.get("use_local_models", True)
+        self._cloud_only = (
+            or_cfg.get("force_cloud", False)
+            and or_cfg.get("enabled", False)
+            and bool(or_cfg.get("api_key", ""))
+            and not self._use_local_models
         )
+
+        if self._cloud_only:
+            logger.info("Cloud-Only mode: vLLM/WSL/Ollama disabled. All inference via OpenRouter.")
+            self.vllm_manager = None
+        else:
+            from src.vllm_manager import VLLMModelManager
+            self.vllm_manager = VLLMModelManager(
+                port=vllm_cfg.get("vllm_port", 8000),
+                gpu_memory_utilization=vllm_cfg.get("vllm_gpu_memory_utilization", 0.90),
+                max_model_len=vllm_cfg.get("vllm_max_model_len", 8192),
+                quantization=vllm_cfg.get("vllm_quantization"),
+                vllm_extra_args=vllm_cfg.get("vllm_extra_args"),
+            )
+
+        # Initialize Tailscale monitor
+        self.tailscale = TailscaleMonitor(self.config)
 
         self.bot = Bot(token=self.bot_token)
         self.dp = Dispatcher()
@@ -136,6 +105,14 @@ class OpenClawGateway:
         self.memory_gc = MemoryGarbageCollector(self.vllm_url)
         self._intent_cache: dict = {}  # Simple cache for intent classification
         self.processed_task_hashes = set()
+
+        # Safety Guardrails (zero-VRAM heuristic checks)
+        self.injection_defender = PromptInjectionDefender(strictness="medium")
+        self.hallucination_detector = HallucinationDetector()
+
+        # Pipeline history & performance metrics storage
+        self._pipeline_history: list = []
+        self._perf_metrics: list = []
 
         # Watchdog for Config
         self._observer = Observer()
@@ -154,23 +131,37 @@ class OpenClawGateway:
             logger.error(f"Failed to start Prometheus server: {e}")
 
         # Register Handlers (delegating to gateway_commands module)
-        self.dp.message.register(lambda m: cmd_start(self, m), Command("start"))
-        self.dp.message.register(lambda m: cmd_help(self, m), Command("help"))
-        self.dp.message.register(lambda m: cmd_status(self, m), Command("status"))
-        self.dp.message.register(lambda m: cmd_models(self, m), Command("models"))
-        self.dp.message.register(lambda m: cmd_test(self, m), Command("test"))
-        self.dp.message.register(lambda m: cmd_test_all_models(self, m), Command("test_all_models"))
-        self.dp.message.register(lambda m: cmd_research(self, m), Command("research"))
-        self.dp.message.register(lambda m: handle_photo(self, m), F.photo)
+        # NOTE: async wrappers required — plain lambdas returning coroutines are NOT awaited by aiogram
+        def _aw(fn):
+            async def wrapper(event):
+                await fn(self, event)
+            return wrapper
+
+        self.dp.message.register(_aw(cmd_start), Command("start"))
+        self.dp.message.register(_aw(cmd_help), Command("help"))
+        self.dp.message.register(_aw(cmd_status), Command("status"))
+        self.dp.message.register(_aw(cmd_models), Command("models"))
+        self.dp.message.register(_aw(cmd_test), Command("test"))
+        self.dp.message.register(_aw(cmd_test_all_models), Command("test_all_models"))
+        self.dp.message.register(_aw(cmd_research), Command("research"))
+        self.dp.message.register(_aw(cmd_tailscale), Command("tailscale"))
+        self.dp.message.register(_aw(handle_photo), F.photo)
+        self.dp.message.register(_aw(handle_voice), F.voice)
+        self.dp.message.register(_aw(handle_document), F.document)
+        self.dp.message.register(_aw(cmd_history), Command("history"))
+        self.dp.message.register(_aw(cmd_perf), Command("perf"))
+        self.dp.message.register(_aw(cmd_agents), Command("agents"))
+        self.dp.message.register(_aw(cmd_agent), Command("agent"))
+        self.dp.message.register(_aw(cmd_openrouter_test), Command("openrouter_test"))
         
         # Заглушка для неизвестных команд
-        self.dp.message.register(lambda m: handle_unknown_command(self, m), F.text.startswith('/'))
+        self.dp.message.register(_aw(handle_unknown_command), F.text.startswith('/'))
         
         # Перехват только текста, который НЕ является командой
         self.dp.message.register(self.handle_prompt, F.text & ~F.text.startswith('/'))
         
         # Callback query handler for inline buttons
-        self.dp.callback_query.register(lambda cb: handle_callback_query(self, cb))
+        self.dp.callback_query.register(_aw(handle_callback_query))
 
         # Background logic
         self._bg_tasks = set()
@@ -188,7 +179,7 @@ class OpenClawGateway:
                 
                 # Logic: Find stale conversation artifacts and zip/summarize them
                 # We can also append the persistent summary to Cold_Memory.md
-                memory_bank_dir = os.path.join(os.getcwd(), ".memory-bank")
+                memory_bank_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".memory-bank")
                 cold_memory_path = os.path.join(memory_bank_dir, "Cold_Memory.md")
                 
                 if gc.persistent_summary:
@@ -208,6 +199,7 @@ class OpenClawGateway:
         """
         Background task to poll for commands from a remote registry.
         Enables operation behind NAT/Firewall without open ports (Phase 2.3).
+        Uses ClawHubClient for structured API communication.
         """
         poll_url = self.config["system"].get("polling_gateway_url")
         if not poll_url:
@@ -217,56 +209,76 @@ class OpenClawGateway:
         interval = self.config["system"].get("polling_interval_sec", 30)
         logger.info("Polling Gateway: Active", url=poll_url, interval=interval)
 
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            while True:
-                try:
-                    async with session.get(poll_url, timeout=10) as resp:
-                        if resp.status == 200:
-                            tasks = await resp.json()
-                            if isinstance(tasks, list) and tasks:
-                                for task in tasks:
-                                    import hashlib
-                                    task_hash = hashlib.sha256(task.get('prompt', '').encode()).hexdigest()
-                                    if task_hash in self.processed_task_hashes:
-                                        continue
-                                    
-                                    self.processed_task_hashes.add(task_hash)
-                                    logger.info("Polling Gateway: Received new task", task_hash=task_hash[:8])
-                                    
-                                    class MockMessage:
-                                        def __init__(self, prompt, admin_id, bot):
-                                            self.text = prompt
-                                            self.from_user = type('MockUser', (), {'id': admin_id})()
-                                            self.reply_to_message = None
-                                            self.bot = bot
-                                        async def reply(self, text, *args, **kwargs):
-                                            logger.info("Polling Result", result=text)
-                                            # Create an awaitable object for edit_text
-                                            class MockStatus:
-                                                async def edit_text(self, *a, **k): return True
-                                            return MockStatus()
-                                        async def answer(self, text, *args, **kwargs):
-                                            logger.info("Polling Result (Answer)", result=text)
+        from src.clawhub.client import ClawHubClient
 
-                                    mock_msg = MockMessage(task.get('prompt'), self.admin_id, self.bot)
-                                    asyncio.create_task(self.handle_prompt(mock_msg))
-                    
-                    await asyncio.sleep(interval)
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logger.debug("Polling Gateway Error", error=str(e))
-                    await asyncio.sleep(interval * 2)
+        client = ClawHubClient(base_url=poll_url, bot_id=str(self.admin_id))
+        await client.initialize()
+
+        while True:
+            try:
+                tasks = await client.poll_tasks()
+                if isinstance(tasks, list) and tasks:
+                    for task in tasks:
+                        import hashlib
+                        task_hash = hashlib.sha256(task.get('prompt', '').encode()).hexdigest()
+                        if task_hash in self.processed_task_hashes:
+                            continue
+
+                        self.processed_task_hashes.add(task_hash)
+                        logger.info("Polling Gateway: Received new task", task_hash=task_hash[:8])
+
+                        class MockMessage:
+                            def __init__(self, prompt, admin_id, bot):
+                                self.text = prompt
+                                self.from_user = type('MockUser', (), {'id': admin_id})()
+                                self.reply_to_message = None
+                                self.bot = bot
+                            async def reply(self, text, *args, **kwargs):
+                                logger.info("Polling Result", result=text)
+                                class MockStatus:
+                                    async def edit_text(self, *a, **k): return True
+                                return MockStatus()
+                            async def answer(self, text, *args, **kwargs):
+                                logger.info("Polling Result (Answer)", result=text)
+
+                        mock_msg = MockMessage(task.get('prompt'), self.admin_id, self.bot)
+                        asyncio.create_task(self.handle_prompt(mock_msg))
+
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Polling Gateway Error", error=str(e))
+                await asyncio.sleep(interval * 2)
 
     async def reload_config(self):
         try:
+            # AutoRollback: create checkpoint before config reload
+            from src.auto_rollback import AutoRollback
+            rollback = AutoRollback(os.path.dirname(os.path.abspath(self.config_path)))
+            try:
+                rollback.create_checkpoint("pre-config-reload")
+            except Exception:
+                pass  # Git may not be available
+
             with open(self.config_path, "r", encoding="utf-8") as f:
-                self.config = json.load(f)
-            self.pipeline.config = self.config
+                new_config = json.loads(os.path.expandvars(f.read()))
+
+            self.config = new_config
+            self.pipeline.config = new_config
             logger.info("Configuration successfully hot-reloaded.")
+
+            try:
+                rollback.finalize("config-reload-success")
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Failed to reload config: {e}")
+            try:
+                rollback.rollback()
+                logger.info("Config rollback successful after error")
+            except Exception:
+                pass
 
     def get_nim_models(self) -> list:
         # Placeholder: returns empty list (models fetched at runtime via NGC API)
@@ -274,6 +286,16 @@ class OpenClawGateway:
 
     async def handle_prompt(self, message: Message):
         if message.from_user.id != self.admin_id:
+            return
+
+        # --- Phase 8: HITL edit reply interception ---
+        _hitl_edits = getattr(self, "_pending_hitl_edits", {})
+        user_id = message.from_user.id
+        if user_id in _hitl_edits:
+            from src.llm_gateway import resolve_approval
+            req_id = _hitl_edits.pop(user_id)
+            resolve_approval(req_id, "edited", edited_prompt=message.text)
+            await message.reply("✏️ Промпт обновлён. Запрос продолжает выполнение.")
             return
 
         PROMPT_COUNTER.inc()
@@ -293,6 +315,24 @@ class OpenClawGateway:
                 pass
 
     async def _handle_prompt_inner(self, message: Message, prompt: str):
+
+        # Safety: Prompt Injection Detection
+        injection_result = self.injection_defender.analyze(prompt)
+        if injection_result.is_injection:
+            logger.warning("Prompt injection detected", severity=injection_result.severity,
+                          patterns=injection_result.patterns_matched)
+            if injection_result.severity in ("high", "critical"):
+                await message.reply(
+                    f"🛡️ *Заблокировано*: обнаружена попытка prompt injection "
+                    f"(severity: {injection_result.severity})",
+                    parse_mode="Markdown",
+                )
+                return
+            # Medium/low: warn but proceed
+            await message.reply(
+                f"⚠️ Предупреждение: подозрительный паттерн в запросе "
+                f"(confidence: {injection_result.confidence:.0%}). Обрабатываю с осторожностью.",
+            )
 
         # Check if it's a reply to ask_user
         is_reply = False
@@ -352,16 +392,21 @@ class OpenClawGateway:
                 pass  # Telegram rate limit on edits
 
         # Periodic typing indicator (Telegram resets after ~5s)
-        typing_active = True
+        typing_stop = asyncio.Event()
         async def _keep_typing():
-            while typing_active:
+            while not typing_stop.is_set():
                 try:
                     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
                 except Exception:
                     pass
-                await asyncio.sleep(4)
+                try:
+                    await asyncio.wait_for(typing_stop.wait(), timeout=4)
+                    break
+                except asyncio.TimeoutError:
+                    pass
         typing_task = asyncio.create_task(_keep_typing())
 
+        _pipeline_start = time.time()
         try:
             result = await self.pipeline.execute_stream(
                 prompt=prompt,
@@ -370,13 +415,13 @@ class OpenClawGateway:
                 task_type="general" if is_fast_path else None,
             )
         finally:
-            typing_active = False
+            typing_stop.set()
             typing_task.cancel()
 
         # Phase 3.4: Self-Healing Logic (One-time retry on failure)
         if result.get("status") == "error":
             logger.warning("Pipeline execution failed. Attempting self-healing retry...", brigade=actual_brigade)
-            typing_active = True
+            typing_stop.clear()
             typing_task = asyncio.create_task(_keep_typing())
             try:
                 result = await self.pipeline.execute_stream(
@@ -386,7 +431,7 @@ class OpenClawGateway:
                     task_type="general" if is_fast_path else None,
                 )
             finally:
-                typing_active = False
+                typing_stop.set()
                 typing_task.cancel()
 
         if result.get("status") == "ask_user":
@@ -421,6 +466,41 @@ class OpenClawGateway:
         llm_response = result["final_response"]
         chain_str = " → ".join(result["chain_executed"])
         display_brigade = f"{actual_brigade} ⚡" if is_fast_path else actual_brigade
+        _pipeline_elapsed = time.time() - _pipeline_start
+
+        # Safety: Hallucination Detection on output
+        hall_result = self.hallucination_detector.detect(llm_response, prompt)
+        if hall_result.overall_risk == "high":
+            llm_response += "\n\n⚠️ _Внимание: обнаружен высокий риск галлюцинации. Проверьте факты._"
+            logger.warning("Hallucination risk HIGH", flags=hall_result.flags,
+                          suspicious=hall_result.suspicious_claims[:3])
+
+        # Record pipeline history
+        self._pipeline_history.append({
+            "timestamp": time.strftime("%H:%M:%S"),
+            "brigade": actual_brigade,
+            "prompt": prompt[:80],
+            "chain": chain_str,
+            "duration_sec": _pipeline_elapsed,
+            "status": result.get("status", "completed"),
+            "hallucination_risk": hall_result.overall_risk,
+        })
+        # Keep last 50 entries
+        if len(self._pipeline_history) > 50:
+            self._pipeline_history = self._pipeline_history[-50:]
+
+        # Record perf metrics from pipeline steps
+        for step in result.get("steps", []):
+            resp_len = len(step.get("response", ""))
+            est_tokens = resp_len // 4  # rough estimate
+            self._perf_metrics.append({
+                "role": step.get("role", "?"),
+                "model": step.get("model", "?"),
+                "tokens": est_tokens,
+                "duration_sec": step.get("duration_sec", _pipeline_elapsed / max(len(result.get("steps", [{}])), 1)),
+            })
+        if len(self._perf_metrics) > 500:
+            self._perf_metrics = self._perf_metrics[-500:]
 
         # 3. Send final response with progressive streaming edits
         stream = result.get("stream")
@@ -490,36 +570,8 @@ class OpenClawGateway:
         logger.info("vLLM URL", vllm_url=self.vllm_url)
         logger.info("Admin ID", admin_id=self.admin_id)
 
-        # Start background tasks
-        memory_task = asyncio.create_task(self._scheduled_memory_gc())
-        poll_task = asyncio.create_task(self._poll_remote_tasks())
-        self._bg_tasks.add(memory_task)
-        self._bg_tasks.add(poll_task)
-        memory_task.add_done_callback(self._bg_tasks.discard)
-        poll_task.add_done_callback(self._bg_tasks.discard)
-
-        # Start vLLM health monitoring
-        self.vllm_manager.start_health_monitor()
-
-        # Pre-load default model to avoid cold start on first message
-        default_model = self.config.get("system", {}).get("model_router", {}).get("general", "Qwen/Qwen2.5-14B-Instruct-AWQ")
-        preload_task = asyncio.create_task(self._preload_model(default_model))
-        self._bg_tasks.add(preload_task)
-        preload_task.add_done_callback(self._bg_tasks.discard)
-
-        # Start Brigade REST API (FastAPI / uvicorn) so the TypeScript
-        # OpenClaw gateway can call brigade pipelines via HTTP.
-        brigade_port = int(os.environ.get("BRIGADE_API_PORT", "8765"))
-        try:
-            from src.brigade_api import run_brigade_api
-            brigade_task = asyncio.create_task(
-                run_brigade_api(self.config, self.vllm_url, self.vllm_manager, port=brigade_port)
-            )
-            self._bg_tasks.add(brigade_task)
-            brigade_task.add_done_callback(self._bg_tasks.discard)
-            logger.info("Brigade API started", port=brigade_port, url=f"http://127.0.0.1:{brigade_port}/brigade/docs")
-        except Exception as e:
-            logger.error("Brigade API failed to start", error=str(e))
+        # Delegate heavy init to boot module
+        await configure_llm_and_pipeline(self)
 
         # Support ENV vars from start_wsl.sh
         use_webhook_env = os.environ.get("USE_WEBHOOK")

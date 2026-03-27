@@ -41,7 +41,7 @@ export type BrigadeExecuteResponse = {
   brigade: string;
   chain_executed: string[];
   steps: BrigadeStepResult[];
-  status: "completed" | "ask_user" | string;
+  status: "completed" | "ask_user" | (string & {});
   question?: string | null;
   duration_ms: number;
 };
@@ -138,14 +138,12 @@ export class BrigadeClient {
 
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
-        throw new BrigadeApiError(
-          `Brigade API error ${resp.status}`,
-          resp.status,
-          text,
-        );
+        throw new BrigadeApiError(`Brigade API error ${resp.status}`, resp.status, text);
       }
 
-      if (!resp.body) throw new BrigadeApiError("No response body for SSE stream", 500);
+      if (!resp.body) {
+        throw new BrigadeApiError("No response body for SSE stream", 500);
+      }
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -153,14 +151,18 @@ export class BrigadeClient {
 
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
+          if (!line.startsWith("data: ")) {
+            continue;
+          }
           try {
             const event = JSON.parse(line.slice(6)) as BrigadeStreamEvent;
             onEvent(event);
@@ -188,7 +190,7 @@ export class BrigadeClient {
   async isReachable(): Promise<boolean> {
     try {
       const s = await this.status();
-      return s.ok === true;
+      return s.ok;
     } catch {
       return false;
     }
@@ -243,7 +245,9 @@ export class BrigadeClient {
         return (await resp.json()) as T;
       } catch (err) {
         lastError = err;
-        if (err instanceof BrigadeApiError) throw err; // don't retry HTTP errors
+        if (err instanceof BrigadeApiError) {
+          throw err;
+        } // don't retry HTTP errors
         if (attempt < this.retries) {
           await _sleep(300 * (attempt + 1));
         }

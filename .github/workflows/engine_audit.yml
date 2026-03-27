@@ -1,58 +1,67 @@
 name: Engine Audit & Model Integrity
 on:
-    push:
-        branches: ["main"]
-    pull_request:
-        branches: ["main"]
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
 jobs:
-    audit_algorithms:
-        runs-on: ubuntu-latest
+  audit_algorithms:
+    runs-on: ubuntu-latest
 
-        steps:
-            - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Set up strict Python 3.12
-              uses: actions/setup-python@v5
-              with:
-                  python-version: "3.12"
-                  cache: "pip"
+      - name: Set up strict Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
 
-            - name: Install baseline dependencies (CPU-only stubs)
-              run: |
-                  python -m pip install --upgrade pip
-                  pip install pytest grpcio-tools pydantic numpy
+      - name: Install baseline dependencies (CPU-only stubs)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest grpcio-tools pydantic numpy
 
-            - name: Audit Zero-Trust Contracts (Protobuf Compile)
-              run: |
-                  python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. contracts/trades.proto
+      - name: Audit Zero-Trust Contracts (Protobuf Compile)
+        run: |
+          python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. contracts/trades.proto
+          if ! git diff --quiet --exit-code; then
+            echo "::error::Generated protobuf files differ from committed versions. Run protoc locally and commit."
+            git diff --stat
+            exit 1
+          fi
 
-            - name: Run Schema Validation Test Suite
-              run: |
-                  # Assert prompt injection blocks and tight boundaries
-                  # pytest tests/test_schemas.py
+      - name: Run Schema Validation Test Suite
+        run: |
+          # Assert prompt injection blocks and tight boundaries
+          # pytest tests/test_schemas.py
 
-            - name: Execute Deterministic Event-Replay Backtester
-              run: |
-                  # Run against Gold Standard SQLite offline dataset to verify mathematical logic degradation
-                  # Mocks out the QuestDB/vLLM requirement for CI runners
-                  export RUNNING_IN_CI=1
-                  export PYTHONPATH=$PYTHONPATH:.
+      - name: Execute Deterministic Event-Replay Backtester
+        run: |
+          # Run against Gold Standard SQLite offline dataset to verify mathematical logic degradation
+          # Mocks out the QuestDB/vLLM requirement for CI runners
+          export RUNNING_IN_CI=1
+          export PYTHONPATH=$PYTHONPATH:.
 
-                  # Capture the output to parse the Sharpe Ratio
-                  OUTPUT=$(python src/backtesting/event_replay.py)
-                  echo "$OUTPUT"
+          # Capture the output to parse the Sharpe Ratio
+          OUTPUT=$(python src/backtesting/event_replay.py)
+          echo "$OUTPUT"
 
-                  # Regex extract Sharpe and ensure no >5% degradation (Dummy assertion for skeleton)
-                  SHARPE=$(echo "$OUTPUT" | grep -oP 'Annualized Sharpe Ratio: \K[0-9.]+')
-                  BASELINE=2.1500
+          # Regex extract Sharpe and ensure no >5% degradation (Dummy assertion for skeleton)
+          SHARPE=$(echo "$OUTPUT" | grep -oP 'Annualized Sharpe Ratio: \K[0-9.]+' || true)
+          if [ -z "$SHARPE" ]; then
+            echo "::error::Could not parse Sharpe Ratio from output. Check script output format."
+            exit 1
+          fi
+          BASELINE=2.1500
 
-                  # Compare floats using awk
-                  RESULT=$(awk -v s="$SHARPE" -v b="$BASELINE" 'BEGIN {print (s >= b * 0.95) ? 1 : 0}')
+          # Compare floats using awk
+          RESULT=$(awk -v s="$SHARPE" -v b="$BASELINE" 'BEGIN {print (s >= b * 0.95) ? 1 : 0}')
 
-                  if [ "$RESULT" -eq 0 ]; then
-                    echo "::error::Mathematical Degradation Detected! Sharpe Ratio ($SHARPE) dropped >5% below Baseline ($BASELINE)."
-                    exit 1
-                  else
-                    echo "Integrity check passed. Models hold strict mathematical bounds."
-                  fi
+          if [ "$RESULT" -eq 0 ]; then
+            echo "::error::Mathematical Degradation Detected! Sharpe Ratio ($SHARPE) dropped >5% below Baseline ($BASELINE)."
+            exit 1
+          else
+            echo "Integrity check passed. Models hold strict mathematical bounds."
+          fi

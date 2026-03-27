@@ -15,23 +15,23 @@ echo "CUDA:   $(python -c 'import torch; print(torch.version.cuda)' 2>/dev/null 
 echo ""
 
 echo "[1/5] Upgrading pip..."
-pip install --upgrade pip -q
+python -m pip install --upgrade pip -q
 
 echo "[2/5] Installing bitsandbytes (4-bit quantization)..."
-pip install bitsandbytes>=0.45 -q
+python -m pip install bitsandbytes>=0.45 -q
 
 echo "[3/5] Installing peft (LoRA mechanism)..."
-pip install peft>=0.14 -q
+python -m pip install peft>=0.14 -q
 
 echo "[4/5] Installing trl (SFTTrainer, DPOTrainer)..."
-pip install trl>=0.15 -q
+python -m pip install trl>=0.15 -q
 
 echo "[5/5] Installing unsloth (2-4x faster training + VRAM savings)..."
-pip install "unsloth[cu124] @ git+https://github.com/unslothai/unsloth.git" -q
+python -m pip install "unsloth[cu124] @ git+https://github.com/unslothai/unsloth.git" -q
 
 echo ""
 echo "[+] Installing datasets and wandb..."
-pip install datasets>=3.0 wandb -q
+python -m pip install datasets>=3.0 wandb -q
 
 echo ""
 echo "=== Verifying installation ==="

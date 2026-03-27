@@ -13,6 +13,16 @@ fastapi
 redis
 uvicorn
 duckduckgo_search
+chromadb>=0.4.0
+beautifulsoup4
+feedparser
+httpx
+
+# Phase 4: New integrations
+apscheduler>=3.10
+discord.py>=2.3
+edge-tts>=6.1
+docker>=7.0
 
 # GPU acceleration packages require custom build for sm_120 (see install_gpu_deps.ps1 or Dockerfile)
 # torch

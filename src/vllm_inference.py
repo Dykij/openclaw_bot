@@ -38,11 +38,21 @@ async def call_vllm(
     """
     Calls local vLLM server (OpenAI-compatible) for a single inference step.
     Endpoint: POST {vllm_url}/chat/completions
+
+    Blocked when use_local_models=false (Cloud-Only mode).
     """
+    # Guard: refuse to call local vLLM if local models are disabled
+    or_cfg = config.get("system", {}).get("openrouter", {})
+    if not or_cfg.get("use_local_models", True):
+        logger.error(f"call_vllm blocked: local models disabled (use_local_models=false), role={role_name}")
+        return (
+            f"[ERROR] Локальная модель заблокирована для {role_name}. "
+            "use_local_models=false в конфиге. Используйте OpenRouter или включите локальные модели."
+        )
+
     system_prompt += (
         " Правила плотности: каждое предложение = новый факт."
-        " Запрещено: повторять суть в разных формулировках, пустые вступления, фразы-заглушки."
-        " Максимум конкретики. Ответ на РУССКОМ ЯЗЫКЕ."
+        " Запрещено: повторять суть в разных формулировках, пустые вступления."
     )
 
     # max_tokens: role-aware caps to prevent verbose over-generation

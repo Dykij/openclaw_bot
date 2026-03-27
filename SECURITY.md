@@ -269,7 +269,7 @@ docker run --read-only --cap-drop=ALL \
 OpenClaw is optimized for high-performance hardware with specific limitations.
 
 - **GPU Requirement**: NVIDIA RTX 5060 Ti (16GB VRAM) or equivalent.
-- **VRAM Management**: Due to the 16GB constraint, the system enforces **sequential model loading**. Heavy models (e.g., `arkady-reasoning-27b`) must be loaded one at a time with `keep_alive=0` to prevent OOM (Out of Memory) crashes.
+- **VRAM Management**: Due to the 16GB constraint, the system enforces **sequential model loading**. Heavy models (e.g., `Qwen2.5-Coder-14B-AWQ`, `DeepSeek-R1-14B-AWQ`) must be loaded one at a time via the vLLM manager to prevent OOM crashes. Context Bridge preserves pipeline state across model swaps.
 - **Stability**: Attempting to load multiple large models simultaneously is considered a misuse of the system and may lead to instability.
 
 ## Repository & Domain Isolation

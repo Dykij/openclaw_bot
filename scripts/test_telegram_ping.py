@@ -7,7 +7,6 @@
   4. Тестирует pipeline_executor (dry-run intent routing без Ollama)
 
 Использование:
-    cd D:\\openclaw_bot\\openclaw_bot
     python -m scripts.test_telegram_ping
 """
 

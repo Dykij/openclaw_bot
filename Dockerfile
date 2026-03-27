@@ -48,10 +48,15 @@ ENV PYTHONPATH="/app"
 WORKDIR /app
 COPY . .
 
-# Set permissions
-RUN chown -R clawworker:clawgroup /app /opt/venv
+# Create persistent data directories for SuperMemory and RAG
+RUN mkdir -p /app/data/supermemory/rag /app/data/rag_db /app/data/context_bridge && \
+    chown -R clawworker:clawgroup /app /opt/venv
 
 USER clawworker
+
+# Health check for the gateway
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:9090/metrics')" || exit 1
 
 # Entrypoint maps directly to the Orchestrator
 CMD ["/opt/venv/bin/python3", "src/main.py"]

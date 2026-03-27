@@ -15,9 +15,7 @@
             "id": "Qwen/Qwen2.5-14B-Instruct-AWQ",
             "name": "Qwen 2.5 14B AWQ (Planner/General)",
             "reasoning": false,
-            "input": [
-              "text"
-            ],
+            "input": ["text"],
             "cost": {
               "input": 0,
               "output": 0,
@@ -31,9 +29,7 @@
             "id": "casperhansen/deepseek-r1-distill-qwen-14b-awq",
             "name": "DeepSeek R1 14B AWQ (Analytical/Reasoning)",
             "reasoning": true,
-            "input": [
-              "text"
-            ],
+            "input": ["text"],
             "cost": {
               "input": 0,
               "output": 0,
@@ -47,9 +43,7 @@
             "id": "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ",
             "name": "Qwen 2.5 Coder 7B AWQ (Executor/Coding)",
             "reasoning": false,
-            "input": [
-              "text"
-            ],
+            "input": ["text"],
             "cost": {
               "input": 0,
               "output": 0,
@@ -63,9 +57,7 @@
             "id": "pytorch/gemma-3-12b-it-AWQ-INT4",
             "name": "Gemma 3 12B AWQ (Archivist/Summary)",
             "reasoning": false,
-            "input": [
-              "text"
-            ],
+            "input": ["text"],
             "cost": {
               "input": 0,
               "output": 0,
@@ -132,15 +124,13 @@
         }
       ],
       "dmPolicy": "allowlist",
-      "botToken": "8461845004:AAE3eAnAyohsRh9XMrkv3pNx56iACKmOuws",
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
       "groups": {
         "*": {
           "requireMention": true
         }
       },
-      "allowFrom": [
-        "458765683"
-      ],
+      "allowFrom": ["458765683"],
       "groupPolicy": "allowlist",
       "streaming": "partial"
     }
@@ -149,7 +139,7 @@
     "mode": "local",
     "auth": {
       "mode": "token",
-      "token": "13c9a8e9c994134ab546c276bc63cde5afe9f17b3c621c6b"
+      "token": "${GATEWAY_AUTH_TOKEN}"
     }
   }
 }

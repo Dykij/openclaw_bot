@@ -35,16 +35,19 @@ class OpenClawMCPClient:
         self._tool_route_map: Dict[str, ClientSession] = {}
 
     async def initialize(self):
-        """Starts local MCP servers and establishes Stdio connections via anyio"""
+        """Starts local MCP servers and establishes Stdio connections via anyio.
+        Each server starts independently — one failure won't block others."""
         if self.db_path:
             await self._start_sqlite_server()
         await self._start_filesystem_server()
         await self._start_parsers_server()
         await self._start_memory_server()
         await self._start_websearch_server()
+        await self._start_shell_server()
 
     async def _start_memory_server(self):
-        """Starts custom Python MCP server for hybrid memory search."""
+        """Starts custom Python MCP server for hybrid memory search.
+        Falls back gracefully if the server is unavailable (e.g. missing chromadb)."""
         print("[MCP] Starting Memory Hybrid Search Server...")
         server_params = StdioServerParameters(
             command=PYTHON_BIN,
@@ -63,7 +66,7 @@ class OpenClawMCPClient:
                 self._register_tool(tool, session)
             print("[MCP] Memory Server initialized successfully.")
         except Exception as e:
-            print(f"[MCP Error] Failed to start Memory Server: {e}")
+            print(f"[MCP Warning] Memory Server unavailable (fallback to TF-IDF): {e}")
 
     async def _start_websearch_server(self):
         """Starts custom Python MCP server for DuckDuckGo web search."""
@@ -85,6 +88,27 @@ class OpenClawMCPClient:
             print("[MCP] WebSearch Server initialized successfully.")
         except Exception as e:
             print(f"[MCP Error] Failed to start WebSearch Server: {e}")
+
+    async def _start_shell_server(self):
+        """Starts custom Python MCP server for secure shell command execution."""
+        print("[MCP] Starting Shell Executor Server...")
+        server_params = StdioServerParameters(
+            command=PYTHON_BIN,
+            args=[os.path.join(os.path.dirname(__file__), "shell_mcp.py")],
+            env=None
+        )
+        try:
+            read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
+            session = await self._exit_stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+            self._server_sessions.append(session)
+
+            response = await session.list_tools()
+            for tool in response.tools:
+                self._register_tool(tool, session)
+            print("[MCP] Shell Executor Server initialized successfully.")
+        except Exception as e:
+            print(f"[MCP Error] Failed to start Shell Executor Server: {e}")
 
     async def _start_sqlite_server(self):
         """Starts Python mcp-server-sqlite in a subprocess"""

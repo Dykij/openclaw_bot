@@ -1,0 +1,2 @@
+facade OK: <class 'src.research._core.DeepResearchPipeline'>
+package OK: <class 'src.research._core.DeepResearchPipeline'>

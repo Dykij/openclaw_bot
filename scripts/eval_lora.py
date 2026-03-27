@@ -103,7 +103,7 @@ def main() -> None:
         print(f"Loading {base_model} + LoRA {adapter_path.name} ...")
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=str(adapter_path),
-            max_seq_length=2048,
+            max_seq_length=512,
             dtype=None,
             load_in_4bit=True,
             cache_dir=args.hf_cache,
@@ -118,7 +118,7 @@ def main() -> None:
             instruction=sample.get("instruction", ""),
             input=sample.get("input", ""),
         )
-        ref = sample.get("output", "")
+        ref = sample.get("output", "") or sample.get("response", "")
         pred = generate(model, tokenizer, prompt, args.max_new_tokens)
         score = rouge1(pred, ref)
         scores.append(score)

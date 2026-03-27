@@ -283,6 +283,6 @@ if __name__ == "__main__":
     import asyncio
 
     with open("config/openclaw_config.json") as f:
-        _config = json.load(f)
+        _config = json.loads(os.path.expandvars(f.read()))
     _vllm_url = _config["system"].get("vllm_base_url", "http://localhost:8000/v1")
     asyncio.run(run_brigade_api(_config, _vllm_url))

@@ -1,0 +1,248 @@
+{
+  "run_ts": "2026-03-27T13:16:18Z",
+  "summary": {
+    "total": 34,
+    "passed": 34,
+    "failed": 0
+  },
+  "results": [
+    {
+      "test": "import:src.boot",
+      "passed": true,
+      "latency_ms": 199.71,
+      "detail": "",
+      "ts": "2026-03-27T13:16:15Z"
+    },
+    {
+      "test": "import:src.boot._env_setup",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:15Z"
+    },
+    {
+      "test": "import:src.boot._mcp_init",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:15Z"
+    },
+    {
+      "test": "import:src.handlers.commands",
+      "passed": true,
+      "latency_ms": 1897.73,
+      "detail": "",
+      "ts": "2026-03-27T13:16:17Z"
+    },
+    {
+      "test": "import:src.gateway_commands",
+      "passed": true,
+      "latency_ms": 0.28,
+      "detail": "",
+      "ts": "2026-03-27T13:16:17Z"
+    },
+    {
+      "test": "import:src.pipeline",
+      "passed": true,
+      "latency_ms": 412.18,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.pipeline._core",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.pipeline._state",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.pipeline._reflexion",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.pipeline._tools_handler",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.research",
+      "passed": true,
+      "latency_ms": 3.27,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.research._core",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.research._searcher",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.research._scraper",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.research._analyzer",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.ai.inference.router",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.ai.inference.budget",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "import:src.ai.inference._shared",
+      "passed": true,
+      "latency_ms": 0.0,
+      "detail": "",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "route:code_simple",
+      "passed": true,
+      "latency_ms": 0.2,
+      "detail": "chose=qwen/qwen-2.5-coder-32b-instruct",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "route:code_complex",
+      "passed": true,
+      "latency_ms": 0.17,
+      "detail": "chose=qwen/qwen-2.5-coder-32b-instruct",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "route:research",
+      "passed": true,
+      "latency_ms": 0.18,
+      "detail": "chose=deepseek/deepseek-r1:free",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "route:general",
+      "passed": true,
+      "latency_ms": 0.14,
+      "detail": "chose=meta-llama/llama-3.3-70b-instruct:free",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "route:risk",
+      "passed": true,
+      "latency_ms": 0.13,
+      "detail": "chose=deepseek/deepseek-r1:free",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "route:vision",
+      "passed": true,
+      "latency_ms": 0.13,
+      "detail": "chose=meta-llama/llama-4-maverick:free",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "budget:init_16k",
+      "passed": true,
+      "latency_ms": 0.09,
+      "detail": "max_tokens=16384",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "budget:general",
+      "passed": true,
+      "latency_ms": 5.35,
+      "detail": "max=256, est_out=153",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "budget:code",
+      "passed": true,
+      "latency_ms": 0.14,
+      "detail": "max=2048, est_out=1228",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "budget:research",
+      "passed": true,
+      "latency_ms": 0.11,
+      "detail": "max=16384, est_out=9830",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "budget:creative",
+      "passed": true,
+      "latency_ms": 0.13,
+      "detail": "max=2048, est_out=1228",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "structure:src/boot",
+      "passed": true,
+      "latency_ms": 0.09,
+      "detail": "all 3 files present",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "structure:src/handlers/commands",
+      "passed": true,
+      "latency_ms": 0.1,
+      "detail": "all 5 files present",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "structure:src/pipeline",
+      "passed": true,
+      "latency_ms": 0.08,
+      "detail": "all 5 files present",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "structure:src/research",
+      "passed": true,
+      "latency_ms": 0.08,
+      "detail": "all 5 files present",
+      "ts": "2026-03-27T13:16:18Z"
+    },
+    {
+      "test": "config:consistency",
+      "passed": true,
+      "latency_ms": 0.01,
+      "detail": "all correct",
+      "ts": "2026-03-27T13:16:18Z"
+    }
+  ]
+}

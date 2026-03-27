@@ -30,8 +30,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dataset", required=True, help="Path to .jsonl training file (Alpaca format)")
     p.add_argument(
         "--model",
-        default="Qwen/Qwen2.5-Coder-7B-Instruct-AWQ",
-        help="HuggingFace model ID (default: Qwen2.5-Coder-7B-AWQ)",
+        default="unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
+        help="HuggingFace model ID (default: unsloth bnb-4bit for QLoRA)",
     )
     p.add_argument("--adapter-name", default="openclaw-v1", help="Name for the LoRA adapter folder")
     p.add_argument("--output-dir", default="/mnt/d/lora_adapters", help="Base dir for adapters")
@@ -43,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-seq-len", type=int, default=2048, help="Max sequence length")
     p.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
     p.add_argument("--warmup-ratio", type=float, default=0.05, help="Warmup ratio")
+    p.add_argument("--dropout", type=float, default=0.05, help="LoRA dropout")
+    p.add_argument("--weight-decay", type=float, default=0.01, help="Weight decay")
     p.add_argument("--wandb-project", default="openclaw-training", help="W&B project name (set '' to disable)")
     p.add_argument("--hf-cache", default="/mnt/d/vllm_models/hub", help="HuggingFace cache dir")
     p.add_argument("--val-split", type=float, default=0.1, help="Validation split ratio")
@@ -80,7 +82,7 @@ def load_dataset_local(path: str):
                 continue
             instruction = obj.get("instruction", "").strip()
             inp = obj.get("input", "").strip()
-            output = obj.get("output", "").strip()
+            output = (obj.get("output") or obj.get("response") or "").strip()
             if not instruction or not output:
                 continue
             if inp:
@@ -139,12 +141,19 @@ def main() -> None:
     from datasets import Dataset
 
     # ── Load model with unsloth (4-bit QLoRA) ──────────────────────────────
-    print("Loading model with unsloth (4-bit)...")
+    is_awq = "awq" in args.model.lower()
+    if is_awq:
+        print(f"Detected AWQ model — loading WITHOUT BitsAndBytes (native AWQ)...")
+        load_4bit = False
+    else:
+        print("Loading model with unsloth (4-bit QLoRA)...")
+        load_4bit = True
+
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
         max_seq_length=args.max_seq_len,
         dtype=None,          # auto-detect (bfloat16 on Blackwell)
-        load_in_4bit=True,   # QLoRA — saves VRAM
+        load_in_4bit=load_4bit,
         cache_dir=args.hf_cache,
     )
 
@@ -158,7 +167,7 @@ def main() -> None:
             "gate_proj", "up_proj", "down_proj",
         ],
         lora_alpha=args.lora_alpha,
-        lora_dropout=0.05,
+        lora_dropout=args.dropout,
         bias="none",
         use_gradient_checkpointing="unsloth",  # saves ~40% VRAM
         random_state=args.seed,
@@ -185,11 +194,13 @@ def main() -> None:
         gradient_accumulation_steps=args.grad_accum,
         warmup_ratio=args.warmup_ratio,
         learning_rate=args.lr,
+        weight_decay=args.weight_decay,
+        lr_scheduler_type="cosine",
         fp16=False,
         bf16=True,           # Blackwell supports bfloat16
-        logging_steps=10,
+        logging_steps=5,
         save_strategy="epoch",
-        evaluation_strategy="epoch" if eval_ds else "no",
+        eval_strategy="epoch" if eval_ds else "no",
         load_best_model_at_end=bool(eval_ds),
         seed=args.seed,
         report_to="wandb" if args.wandb_project else "none",

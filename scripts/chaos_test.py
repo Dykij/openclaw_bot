@@ -18,8 +18,15 @@ def run_chaos_test():
     time.sleep(1800)
     
     logger.warning("💥 T+30: INITIATING REDIS CONTAINER KILL")
-    # Using shell=True for flexible matching of the redis container
-    subprocess.run("docker kill $(docker ps -q -f name=redis)", shell=True, check=False)
+    # Use explicit argument list instead of shell=True to avoid command injection
+    try:
+        result = subprocess.run(["docker", "ps", "-q", "-f", "name=redis"], capture_output=True, text=True, check=False)
+        container_ids = result.stdout.strip().split()
+        for cid in container_ids:
+            if cid:
+                subprocess.run(["docker", "kill", cid], check=False)
+    except FileNotFoundError:
+        logger.warning("docker not found, skipping Redis kill")
     logger.info("✅ Redis killed. Engines should be auto-recovering graph boundaries via websockets.")
     
     # ---------------------------------------------------------
