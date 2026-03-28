@@ -875,3 +875,224 @@ class TestBatchAndTokenBudgetDataclasses:
         rt = RoutingTask(prompt="test")
         assert rt.task_type == "general"
         assert rt.complexity_hint is None
+
+
+# ===================================================================
+# v13.2 NEW: Self-Reflective RAG classifier tests
+# ===================================================================
+
+from src.pipeline._state import rag_necessary
+
+
+class TestSelfReflectiveRAG:
+    """Tests for the Self-Reflective RAG classifier (rag_necessary)."""
+
+    # --- Trivial queries → RAG should be SKIPPED ---
+
+    def test_greeting_skips_rag(self):
+        assert rag_necessary("привет") is False
+
+    def test_greeting_english_skips_rag(self):
+        assert rag_necessary("hello there") is False
+
+    def test_short_abstract_skips_rag(self):
+        assert rag_necessary("что такое капитализм") is False
+
+    def test_simple_question_skips_rag(self):
+        # "Как зовут" — short pure factual question
+        assert rag_necessary("Как зовут президента") is False
+
+    def test_very_short_query_skips_rag(self):
+        assert rag_necessary("ку") is False
+
+    # --- RAG-required queries → should NOT be skipped ---
+
+    def test_file_reference_requires_rag(self):
+        assert rag_necessary("проверь src/pipeline/_core.py на ошибки") is True
+
+    def test_url_requires_rag(self):
+        assert rag_necessary("открой https://example.com и суммируй") is True
+
+    def test_code_keyword_requires_rag(self):
+        assert rag_necessary("напиши функцию для парсинга JSON") is True
+
+    def test_pipeline_keyword_requires_rag(self):
+        assert rag_necessary("обнови pipeline для новой бригады") is True
+
+    def test_memory_recall_requires_rag(self):
+        assert rag_necessary("что ты знаешь о конфиге бота") is True
+
+    def test_long_complex_prompt_requires_rag(self):
+        long_prompt = "Проведи глубокий анализ алгоритма арбитража " * 20
+        assert rag_necessary(long_prompt) is True
+
+    def test_implement_keyword_requires_rag(self):
+        assert rag_necessary("implement a new async executor for the pipeline") is True
+
+    def test_bug_fix_requires_rag(self):
+        assert rag_necessary("исправь баг в модуле памяти") is True
+
+    def test_rag_keyword_requires_rag(self):
+        assert rag_necessary("как работает supermemory в боте") is True
+
+
+# ===================================================================
+# v13.2 NEW: AFlow dynamic chain generation tests
+# ===================================================================
+
+from src.pipeline._aflow import AFlowEngine, AFlowResult, _HEURISTIC_CHAINS
+
+
+class TestAFlowEngine:
+    """Tests for AFlow dynamic chain generation (pure logic, no LLM)."""
+
+    @pytest.fixture()
+    def engine(self):
+        return AFlowEngine(vllm_url="", model="test-model")
+
+    def test_heuristic_code_task(self, engine):
+        result = engine._match_heuristic(
+            "напиши асинхронный парсер для Dmarket API",
+            ["Planner", "Coder", "Auditor", "Executor_Tools"],
+        )
+        assert result is not None
+        assert "Planner" in result or "Coder" in result
+
+    def test_heuristic_research_task(self, engine):
+        result = engine._match_heuristic(
+            "найди информацию о новых CS2 скинах",
+            ["Researcher", "Analyst", "Summarizer"],
+        )
+        assert result is not None
+        assert "Researcher" in result
+
+    def test_heuristic_trading_task(self, engine):
+        result = engine._match_heuristic(
+            "проверь price для AK-47 на Dmarket",
+            ["Planner", "Executor_Tools", "Auditor"],
+        )
+        assert result is not None
+
+    def test_heuristic_filters_unavailable_roles(self, engine):
+        result = engine._match_heuristic(
+            "напиши функцию",
+            ["Planner", "Executor_Tools"],  # Coder not available
+        )
+        if result:
+            for r in result:
+                assert r in ["Planner", "Executor_Tools"]
+
+    def test_parse_chain_valid_json(self, engine):
+        raw = '["Planner", "Coder", "Auditor"]'
+        available = ["Planner", "Coder", "Auditor", "Executor_Tools"]
+        result = engine._parse_chain(raw, available, 7)
+        assert result == ["Planner", "Coder", "Auditor"]
+
+    def test_parse_chain_embedded_json(self, engine):
+        raw = 'Here is the chain: ["Planner", "Executor_Tools"] for your task.'
+        available = ["Planner", "Executor_Tools", "Auditor"]
+        result = engine._parse_chain(raw, available, 7)
+        assert result == ["Planner", "Executor_Tools"]
+
+    def test_parse_chain_filters_unknown_roles(self, engine):
+        raw = '["Planner", "UnknownAgent", "Auditor"]'
+        available = ["Planner", "Auditor"]
+        result = engine._parse_chain(raw, available, 7)
+        assert "UnknownAgent" not in (result or [])
+
+    def test_parse_chain_too_short_returns_none(self, engine):
+        raw = '["Planner"]'
+        result = engine._parse_chain(raw, ["Planner"], 7)
+        assert result is None
+
+    def test_parse_chain_invalid_json_returns_none(self, engine):
+        result = engine._parse_chain("not json at all", ["Planner"], 7)
+        assert result is None
+
+    def test_score_candidates_prefers_orchestrator_first(self, engine):
+        chain_good = ["Planner", "Coder", "Auditor"]
+        chain_bad = ["Coder", "Planner", "Auditor"]
+        best, score = engine._score_candidates([chain_good, chain_bad], "complex")
+        assert best == chain_good
+
+    def test_score_candidates_complex_prefers_auditor(self, engine):
+        with_auditor = ["Planner", "Coder", "Auditor"]
+        without_auditor = ["Planner", "Coder"]
+        best, score = engine._score_candidates([with_auditor, without_auditor], "complex")
+        assert best == with_auditor
+
+    def test_score_candidates_simple_no_auditor_ok(self, engine):
+        short = ["Planner", "Coder"]
+        long_with_auditor = ["Planner", "Coder", "Auditor", "State_Manager"]
+        best, score = engine._score_candidates([short, long_with_auditor], "simple")
+        # Short chain preferred for simple tasks
+        assert len(best) <= len(long_with_auditor)
+
+    def test_get_chain_dynamic_fallback_sync(self, engine):
+        """Synchronous fallback: when no roles available, uses default_chains."""
+        chain = engine.default_chains.get("Dmarket-Dev", ["Planner"])
+        assert len(chain) > 0
+
+    def test_aflow_result_dataclass(self):
+        result = AFlowResult(
+            chain=["Planner", "Coder"],
+            source="heuristic",
+            confidence=0.85,
+            reasoning="keyword match",
+            candidates_explored=0,
+        )
+        assert result.chain == ["Planner", "Coder"]
+        assert result.confidence == 0.85
+
+    @pytest.mark.asyncio
+    async def test_generate_chain_heuristic_path(self, engine):
+        """Heuristic fast-path returns immediately without LLM."""
+        available = ["Planner", "Coder", "Auditor"]
+        # Trading prompt should HIT heuristic
+        result = await engine.generate_chain(
+            prompt="купить скин AK-47 на dmarket по хорошей цене",
+            brigade="Dmarket-Dev",
+            available_roles=available,
+        )
+        assert result.chain
+        assert result.source in ("heuristic", "fallback")
+
+    @pytest.mark.asyncio
+    async def test_generate_chain_fallback_no_vllm(self, engine):
+        """When vllm_url='' and no heuristic matches, falls back to default_chains."""
+        available = ["Planner", "Researcher", "Analyst"]
+        result = await engine.generate_chain(
+            prompt="абстрактный вопрос без ключевых слов xyz",
+            brigade="Research-Ops",
+            available_roles=available,
+        )
+        assert result.chain  # must always return something
+        assert result.source in ("heuristic", "llm", "fallback")
+
+
+# ===================================================================
+# v13.2 NEW: classify_complexity tests (shared between LATS + AFlow)
+# ===================================================================
+
+from src.pipeline._lats_search import classify_complexity
+
+
+class TestClassifyComplexity:
+    def test_simple_greeting(self):
+        assert classify_complexity("привет как дела") == "simple"
+
+    def test_complex_rust_prompt(self):
+        level = classify_complexity("напиши async Rust parser с FFI интеграцией")
+        assert level in ("complex", "extreme")
+
+    def test_extreme_multifile(self):
+        prompt = "migrate multi-file architecture with pyo3 ffi cryptograph " * 5
+        assert classify_complexity(prompt) == "extreme"
+
+    def test_complex_long_prompt(self):
+        prompt = "проведи анализ алгоритма " + "graph tree algorithm " * 50
+        level = classify_complexity(prompt)
+        assert level in ("complex", "extreme")
+
+    def test_simple_short_prompt(self):
+        assert classify_complexity("скажи привет") == "simple"

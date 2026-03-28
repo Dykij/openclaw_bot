@@ -66,6 +66,9 @@ from src.pipeline._tools_handler import handle_planner_handoff
 from src.pipeline._lats_search import LATSEngine, classify_complexity
 from src.safety.hallucination import MARCHProtocol
 
+# v13.2: AFlow dynamic chain generation + Ensemble Voting
+from src.pipeline._aflow import AFlowEngine
+
 logger = structlog.get_logger(__name__)
 
 
@@ -148,6 +151,16 @@ class PipelineExecutor:
         self._lats_engine = LATSEngine(model=lats_model, vllm_url=self.vllm_url)
         self._march_protocol = MARCHProtocol(vllm_url=self.vllm_url)
 
+        # v13.2: AFlow dynamic chain generator
+        aflow_model = self.config.get("system", {}).get("model_router", {}).get(
+            "intent", "meta-llama/llama-3.3-70b-instruct:free"
+        )
+        self._aflow = AFlowEngine(
+            vllm_url=self.vllm_url,
+            model=aflow_model,
+            default_chains=self.default_chains,
+        )
+
     def _init_supermemory(self) -> None:
         init_supermemory(self)
 
@@ -203,6 +216,46 @@ class PipelineExecutor:
         default_chain = self.default_chains.get(brigade, ["Planner"])
         return [role for role in default_chain if role in available_roles]
 
+    async def get_chain_dynamic(
+        self,
+        prompt: str,
+        brigade: str,
+        max_steps: int = 7,
+    ) -> tuple[List[str], str]:
+        """v13.2 AFlow: generate optimal chain for this prompt.
+
+        Returns (chain, source) where source is "heuristic"|"llm"|"lats"|"fallback".
+        Falls back to static get_chain() on any error.
+        """
+        # Если в конфиге явно задан pipeline — уважаем его (не override)
+        brigade_config = self.config.get("brigades", {}).get(brigade, {})
+        if "pipeline" in brigade_config:
+            return brigade_config["pipeline"][:max_steps], "config"
+
+        available_roles = list(brigade_config.get("roles", {}).keys())
+        if not available_roles:
+            return self.get_chain(brigade)[:max_steps], "fallback"
+
+        try:
+            aflow_result = await self._aflow.generate_chain(
+                prompt=prompt,
+                brigade=brigade,
+                available_roles=available_roles,
+                config=self.config,
+                max_chain_len=max_steps,
+            )
+            chain = aflow_result.chain or self.get_chain(brigade)
+            logger.info(
+                "AFlow chain generated",
+                chain=chain,
+                source=aflow_result.source,
+                confidence=round(aflow_result.confidence, 2),
+            )
+            return chain[:max_steps], aflow_result.source
+        except Exception as e:
+            logger.warning("AFlow chain generation failed, using static chain", error=str(e))
+            return self.get_chain(brigade)[:max_steps], "fallback"
+
     async def execute(
         self,
         prompt: str,
@@ -214,8 +267,10 @@ class PipelineExecutor:
         """Execute the full pipeline for a brigade."""
         if task_type:
             chain = [task_type]
+            chain_source = "task_type"
         else:
-            chain = self.get_chain(brigade)[:max_steps]
+            # v13.2: AFlow — dynamic chain generation
+            chain, chain_source = await self.get_chain_dynamic(prompt, brigade, max_steps)
 
         if not chain:
             return {
@@ -226,7 +281,7 @@ class PipelineExecutor:
                 "status": "completed"
             }
 
-        logger.info(f"Pipeline START: brigade={brigade}, chain={' → '.join(chain)}")
+        logger.info(f"Pipeline START: brigade={brigade}, chain={' → '.join(chain)}, source={chain_source}")
 
         # Reset per-model circuit breakers at the start of each pipeline run
         # so stale failures from previous runs don't poison fresh queries.
@@ -370,10 +425,36 @@ class PipelineExecutor:
                 active_mcp = self.openclaw_mcp if brigade == "OpenClaw" else self.dmarket_mcp
                 role_schema = ROLE_SCHEMAS.get(role_name) if not task_type else None
 
-                response = await self._call_vllm(
-                    model, system_prompt, step_prompt, role_name, role_config, active_mcp,
-                    preserve_think=preserve_think, json_schema=role_schema
-                )
+                # v13.2: Ensemble Voting для Executor ролей (только сложные задачи)
+                _ensemble_cfg = self.config.get("system", {}).get("ensemble_voting", {})
+                _ensemble_enabled = _ensemble_cfg.get("enabled", True)
+                _is_executor = role_name.startswith("Executor_") or role_name in ("Coder",)
+                _is_complex = classify_complexity(prompt) in ("complex", "extreme")
+                _use_ensemble = _ensemble_enabled and _is_executor and _is_complex and not task_type
+
+                if _use_ensemble:
+                    _auditor_cfg = (
+                        self.config.get("brigades", {}).get(brigade, {}).get("roles", {}).get("Auditor", {})
+                    )
+                    logger.info("Ensemble Voting activated", role=role_name, instances=2)
+                    if status_callback:
+                        await status_callback(role_name, display_model,
+                                              "🗳️ Ensemble: запускаю N экземпляров с разной температурой...")
+                    response = await self._ensemble_vote(
+                        role_name=role_name,
+                        model=model,
+                        system_prompt=system_prompt,
+                        step_prompt=step_prompt,
+                        role_config=role_config,
+                        active_mcp=active_mcp,
+                        n_instances=_ensemble_cfg.get("n_instances", 2),
+                        auditor_role_config=_auditor_cfg,
+                    )
+                else:
+                    response = await self._call_vllm(
+                        model, system_prompt, step_prompt, role_name, role_config, active_mcp,
+                        preserve_think=preserve_think, json_schema=role_schema
+                    )
 
                 # --- GUARDRAIL VALIDATION WITH RETRY ---
                 guardrail_fn = ROLE_GUARDRAILS.get(role_name)
@@ -634,6 +715,118 @@ class PipelineExecutor:
             if or_model:
                 return or_model
         return fallback_model or role_config.get("model", "unknown")
+
+    # ------------------------------------------------------------------
+    # v13.2: Ensemble Voting — parallel Executor instances with consensus
+    # ------------------------------------------------------------------
+
+    async def _ensemble_vote(
+        self,
+        role_name: str,
+        model: str,
+        system_prompt: str,
+        step_prompt: str,
+        role_config: Dict[str, Any],
+        active_mcp,
+        n_instances: int = 2,
+        auditor_role_config: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Run N Executor instances in parallel with temperature diversity,
+        then select the best response via Auditor consensus scoring.
+
+        v13.2: uses asyncio.TaskGroup for parallel inference.
+        - Instance 0: temperature=0.7 (balanced)
+        - Instance 1: temperature=1.0 (creative / alternative view)
+        - Auditor (if available): scores all candidates and picks winner
+          or synthesises a final composite answer.
+
+        Falls back to single-instance call on any errors.
+        """
+        temperatures = [0.7, 1.0, 0.5][:n_instances]
+
+        async def _run_at_temp(temp: float) -> str:
+            # Patch role_config temperature inline — non-destructive copy
+            patched_config = dict(role_config)
+            patched_config["temperature"] = temp
+            try:
+                return await self._call_vllm(
+                    model, system_prompt, step_prompt,
+                    role_name, patched_config, active_mcp,
+                    preserve_think=False,
+                )
+            except Exception as e:
+                logger.warning("Ensemble instance failed", temp=temp, error=str(e))
+                return ""
+
+        # Launch all instances concurrently
+        tasks = [_run_at_temp(t) for t in temperatures]
+        candidates: List[str] = []
+        try:
+            async with asyncio.TaskGroup() as tg:
+                futures = [tg.create_task(_run_at_temp(t)) for t in temperatures]
+            candidates = [f.result() for f in futures if f.result()]
+        except* Exception as eg:
+            logger.warning("Ensemble TaskGroup error", errors=str(eg))
+            # Graceful fallback via gather
+            raw = await asyncio.gather(*tasks, return_exceptions=True)
+            candidates = [r for r in raw if isinstance(r, str) and r]
+
+        if not candidates:
+            logger.warning("Ensemble: all instances failed, single fallback")
+            return await self._call_vllm(
+                model, system_prompt, step_prompt, role_name, role_config, active_mcp,
+            )
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        # --- Auditor consensus scoring ---
+        auditor_cfg = auditor_role_config or {}
+        auditor_model = auditor_cfg.get("model") or auditor_cfg.get("openrouter_model") or model
+
+        candidates_block = "\n\n".join(
+            f"[CANDIDATE {i + 1}]:\n{c[:1500]}"
+            for i, c in enumerate(candidates)
+        )
+        vote_prompt = (
+            f"You are an expert judge. The following are {len(candidates)} candidate responses "
+            f"to the same task. Analyse each, then either:\n"
+            f"a) Select the best candidate verbatim (output: 'WINNER: <N>'), or\n"
+            f"b) Synthesise a superior composite answer using the best parts.\n\n"
+            f"TASK:\n{step_prompt[:600]}\n\n"
+            f"{candidates_block}\n\n"
+            f"Your verdict (winner or composite):"
+        )
+        vote_system = (
+            "You are a senior technical reviewer. Evaluate response quality, correctness, "
+            "completeness and absence of hallucinations. Output the best answer directly."
+        )
+
+        try:
+            verdict = await self._call_vllm(
+                auditor_model,
+                vote_system,
+                vote_prompt,
+                "Ensemble_Auditor",
+                auditor_cfg or role_config,
+                active_mcp,
+            )
+            # If verdict references a specific winner, return that candidate
+            m = re.search(r'WINNER:\s*(\d+)', verdict or "")
+            if m:
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(candidates):
+                    logger.info("Ensemble: Auditor selected winner", idx=idx + 1)
+                    return candidates[idx]
+            # Otherwise return the synthesised composite
+            if verdict and len(verdict.strip()) > 30:
+                logger.info("Ensemble: Auditor synthesised composite answer")
+                return verdict
+        except Exception as e:
+            logger.warning("Ensemble Auditor failed, using longest candidate", error=str(e))
+
+        # Last resort: return longest (most complete) candidate
+        return max(candidates, key=len)
 
     async def _call_vllm(self, model, system_prompt, user_prompt, role_name, role_config, mcp_client, preserve_think=False, json_schema=None) -> str:
         or_model = role_config.get("openrouter_model")

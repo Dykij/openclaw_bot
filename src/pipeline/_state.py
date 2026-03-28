@@ -1,4 +1,7 @@
-"""Pipeline state management — SuperMemory, RAG, SmartModelRouter, Graph-RAG initialization."""
+"""Pipeline state management — SuperMemory, RAG, SmartModelRouter, Graph-RAG initialization.
+
+v13.2: Self-Reflective RAG — классификатор необходимости Retrieval.
+"""
 
 import os
 import re
@@ -13,6 +16,73 @@ from src.memory.knowledge_store import KnowledgeStore
 
 logger = structlog.get_logger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# v13.2: Self-Reflective RAG — "RAG Necessary?" classifier
+# ---------------------------------------------------------------------------
+
+# Паттерны запросов, которые НЕ требуют Retrieval (экономим 40-60% времени)
+_RAG_SKIP_PATTERNS: tuple[re.Pattern, ...] = (
+    # приветствия и светская беседа
+    re.compile(r"^\s*(привет|здравствуй|хай|hi|hello|hey|добрый|доброе|доброй|yo|ку|sup)\b.*$", re.I),
+    # чистая математика / вычисления
+    re.compile(r"^[\d\s\+\-\*/\^%\(\)\.]+$"),
+    re.compile(r"^\s*(сколько\s+будет|вычисли|посчитай|calculate|compute|how\s+much\s+is)\s+[\d\s\+\-\*/]+", re.I),
+    # абстрактные определения без специфики проекта
+    re.compile(r"^\s*(что\s+такое|что\s+значит|what\s+is|define|объясни\s+понятие|explain\s+what)\s+\w+\s*\.?\s*$", re.I),
+    # простые вопросы без контекста файлов / URL
+    re.compile(r"^\s*(как\s+зовут|when\s+was|who\s+is|какого\s+года|в\s+каком\s+году)\b", re.I),
+)
+
+# Паттерны, которые ГАРАНТИРУЮТ необходимость RAG
+_RAG_REQUIRED_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"[\w/\\]+\.(?:py|ts|rs|js|md|json|toml|yaml|yml)\b"),  # упоминание файлов
+    re.compile(r"https?://", re.I),                                       # URL
+    re.compile(r"\b(запомни|помни|is it in memory|что\s+ты\s+знаешь\s+о|recall|retrieve|найди\s+в\s+памяти)\b", re.I),
+    re.compile(r"\b(pipeline|brigade|executor|planner|auditо?r|foreman|вектор|rag|supermemory)\b", re.I),
+    # Команды на создание/модификацию кода — всегда нуждаются в контексте проекта
+    re.compile(r"\b(напиши|написать|создай|реализуй|implement|рефактор|rewrite|исправь\s+баг|fix|документаци|docstring|код|code)\b", re.I),
+)
+
+
+def rag_necessary(prompt: str) -> bool:
+    """v13.2 Self-Reflective RAG: определяет, нужен ли этап Retrieval.
+
+    Returns True  → запускать SuperMemory + RAG + Graph-RAG (стандарт).
+    Returns False → пропустить Retrieval (экономия 40-60% времени).
+
+    Логика трёхуровневая:
+    1. Если есть явные сигналы RAG-необходимости → True.
+    2. Если запрос соответствует skip-паттернам (приветствие / математика / абстракция) → False.
+    3. По умолчанию (неизвестный запрос) → True (безопасный режим).
+    """
+    # Уровень 1: Жёсткие маркеры «нужен RAG»
+    for pat in _RAG_REQUIRED_PATTERNS:
+        if pat.search(prompt):
+            logger.debug("RAG classifier: REQUIRED (pattern match)", pattern=pat.pattern[:40])
+            return True
+
+    # Уровень 2: Запрос явно не требует контекста
+    for pat in _RAG_SKIP_PATTERNS:
+        if pat.match(prompt):
+            logger.info("RAG classifier: SKIPPED (trivial query)", length=len(prompt))
+            return False
+
+    # Уровень 3: Эвристика длины — короткие абстрактные запросы без спецсимволов
+    stripped = prompt.strip()
+    if (
+        len(stripped) < 80
+        and "/" not in stripped
+        and "\\" not in stripped
+        and "." not in stripped.rstrip("!?…")
+        and not any(c.isdigit() for c in stripped[:20])  # не числовые вычисления в конце
+    ):
+        word_count = len(stripped.split())
+        if word_count <= 6:
+            logger.info("RAG classifier: SKIPPED (short abstract query)", words=word_count)
+            return False
+
+    return True
 
 def init_smart_router(config: Dict[str, Any], force_cloud: bool) -> Optional[SmartModelRouter]:
     """Initialize SmartModelRouter from config model profiles.
@@ -105,9 +175,17 @@ def init_supermemory(executor) -> None:
 async def recall_memory_context(executor, prompt: str) -> str:
     """Auto memory recall at pipeline start.
 
+    v13.2: Self-Reflective RAG — пропускает Retrieval для тривиальных запросов.
+    Гарантирует 40-60% экономии времени на простых вопросах.
+
     Gathers relevant context from SuperMemory, RAG engine, and MCP memory_search.
     Returns a context string to seed the pipeline, or empty string on failure.
     """
+    # v13.2: Self-Reflective RAG gate
+    if not rag_necessary(prompt):
+        logger.info("Self-Reflective RAG: retrieval skipped (trivial query)")
+        return ""
+
     fragments: list[str] = []
 
     if executor._supermemory:

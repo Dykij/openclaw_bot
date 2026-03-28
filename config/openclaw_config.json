@@ -89,7 +89,20 @@
       "code": "qwen/qwen3-coder:free",
       "research": "nousresearch/hermes-3-llama-3.1-405b:free",
       "vision": "nvidia/nemotron-nano-12b-v2-vl:free",
-      "video_analyst": "nvidia/nemotron-nano-12b-v2-vl:free"
+      "video_analyst": "nvidia/nemotron-nano-12b-v2-vl:free",
+      "intent": "stepfun/step-3.5-flash:free",
+      "expand": "google/gemma-3-12b-it:free"
+    },
+    "aflow": {
+      "enabled": true,
+      "notes": "v13.2 AFlow: dynamic chain generation via LLM. Set enabled=false to revert to static chains.",
+      "heuristic_fast_path": true
+    },
+    "ensemble_voting": {
+      "enabled": true,
+      "n_instances": 2,
+      "notes": "v13.2 Ensemble Voting: parallel Executor runs with temperatures [0.7, 1.0]. Auditor picks winner. Only activates for complex/extreme tasks.",
+      "min_complexity": "complex"
     }
   },
   "hitl": {
