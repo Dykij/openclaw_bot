@@ -49,7 +49,7 @@ class KnowledgeEntry:
 class KnowledgeIndex:
     """In-memory index of all knowledge entries."""
     entries: List[KnowledgeEntry] = field(default_factory=list)
-    version: str = "12.0-ASCENDED"
+    version: str = "12.1-COMPASS"
     built_at: float = field(default_factory=time.time)
 
 
@@ -308,6 +308,147 @@ _PY314_ENTRIES: List[KnowledgeEntry] = [
         ),
         best_practice="Use PyConfig_Get/Set instead of legacy Py_*Flag globals in C extensions.",
         pep_or_rfc="PEP 741",
+    ),
+    # -- v12.1 additions from web research --
+    KnowledgeEntry(
+        id="py314_incremental_gc",
+        tag="STANDARD_LIBRARY_PY314",
+        category="runtime",
+        title="Incremental Garbage Collector (PEP 556 evolution)",
+        summary=(
+            "Python 3.14 introduces an incremental garbage collector that reduces "
+            "maximum pause times significantly. Instead of collecting all generations "
+            "at once, GC work is spread across multiple incremental steps."
+        ),
+        best_practice=(
+            "No code changes needed — the incremental GC is transparent. "
+            "Avoid disabling GC (gc.disable()) unless profiling proves necessity. "
+            "Long-running servers benefit most from reduced tail latencies."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="py314_tail_call_interpreter",
+        tag="STANDARD_LIBRARY_PY314",
+        category="runtime",
+        title="Tail-Call Interpreter (CPython 3.14)",
+        summary=(
+            "CPython 3.14 has an experimental tail-call interpreter giving 3-5%% "
+            "performance improvement when built with Clang 19+. Uses computed gotos "
+            "with tail-call optimization to reduce interpreter dispatch overhead."
+        ),
+        best_practice=(
+            "Build CPython with Clang 19+ and --with-tail-call-interp for best performance. "
+            "No source code changes needed — speedup is automatic. "
+            "Falls back to standard interpreter on unsupported compilers."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="py314_pep768_remote_debug",
+        tag="STANDARD_LIBRARY_PY314",
+        category="debugging",
+        title="PEP 768: Safe External Debugger Interface (sys.remote_exec)",
+        summary=(
+            "sys.remote_exec(pid, script) allows injecting a Python script into a "
+            "running process for debugging without stopping it. Uses signal-safe "
+            "mechanism to schedule script execution at the next eval breaker check."
+        ),
+        best_practice=(
+            "Use sys.remote_exec(pid, 'debug_script.py') for production debugging. "
+            "The script runs in the target process context — keep it minimal. "
+            "Requires same Python version in debugger and target process."
+        ),
+        code_example=(
+            "import sys\n"
+            "# Inject debugging script into running process:\n"
+            "sys.remote_exec(target_pid, '/path/to/debug_dump.py')\n\n"
+            "# debug_dump.py (runs inside target):\n"
+            "import traceback, threading\n"
+            "for t in threading.enumerate():\n"
+            "    print(f'Thread {t.name}:', traceback.format_stack(t))"
+        ),
+        pep_or_rfc="PEP 768",
+    ),
+    KnowledgeEntry(
+        id="py314_uuid678",
+        tag="STANDARD_LIBRARY_PY314",
+        category="stdlib",
+        title="UUID Versions 6, 7, 8 Support",
+        summary=(
+            "uuid module adds uuid6(), uuid7(), uuid8() functions. "
+            "UUID7 is time-ordered (monotonic, sortable), recommended for databases. "
+            "UUID8 is for custom/experimental formats."
+        ),
+        best_practice=(
+            "Use uuid.uuid7() for new database primary keys — it's time-sortable "
+            "and has better locality than uuid4(). Reserve uuid4() for opaque tokens."
+        ),
+        code_example=(
+            "import uuid\n"
+            "pk = uuid.uuid7()  # time-ordered, sortable\n"
+            "token = uuid.uuid4()  # random, opaque"
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="py314_heapq_max",
+        tag="STANDARD_LIBRARY_PY314",
+        category="stdlib",
+        title="heapq Max-Heap Functions",
+        summary=(
+            "heapq module adds max-heap counterparts: heapify_max(), heappush_max(), "
+            "heappop_max(), heapreplace_max(), heappushpop_max(). "
+            "No more negate-trick for max-heaps."
+        ),
+        best_practice=(
+            "Use heapq.heappush_max()/heappop_max() instead of negating values. "
+            "Cleaner, more readable, and avoids bugs with non-numeric types."
+        ),
+        code_example=(
+            "import heapq\n"
+            "h = [3, 1, 4, 1, 5]\n"
+            "heapq.heapify_max(h)  # max-heap in-place\n"
+            "heapq.heappop_max(h)  # returns 5 (largest)"
+        ),
+        anti_pattern=(
+            "Do NOT use -x trick for max-heaps: heapq.heappush(h, -x). "
+            "Use the native max-heap functions instead."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="py314_error_messages",
+        tag="STANDARD_LIBRARY_PY314",
+        category="developer_experience",
+        title="Improved Error Messages: Keyword Typo Suggestions",
+        summary=(
+            "Python 3.14 suggests correct keyword arguments when a typo is detected. "
+            "E.g., func(colr='red') now suggests 'Did you mean: color?'. "
+            "Also improved messages for common str/bytes/dict mistakes."
+        ),
+        best_practice=(
+            "Leverage improved error messages for faster debugging. "
+            "Use descriptive keyword argument names — the typo detector works best "
+            "when names are distinct."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="py314_pep739_build_details",
+        tag="STANDARD_LIBRARY_PY314",
+        category="packaging",
+        title="PEP 739: Static build-details.json",
+        summary=(
+            "Python 3.14 ships build-details.json describing build configuration, "
+            "paths, compiler flags, and feature toggles. Replaces brittle sysconfig "
+            "parsing for build tools and CI."
+        ),
+        best_practice=(
+            "Use build-details.json in build scripts instead of parsing sysconfig output. "
+            "Access via sysconfig.get_config_var('build_details_path') or fixed path."
+        ),
+        pep_or_rfc="PEP 739",
     ),
 ]
 
@@ -870,6 +1011,55 @@ _TS58_ENTRIES: List[KnowledgeEntry] = [
             "a.isSubsetOf(b);         // false"
         ),
         pep_or_rfc="TC39 Set Methods proposal",
+    ),
+    # -- v12.1 additions from web research --
+    KnowledgeEntry(
+        id="ts58_lib_replacement",
+        tag="TYPESCRIPT_MODERN_58",
+        category="compiler",
+        title="--libReplacement Flag (TS 5.8)",
+        summary=(
+            "TS 5.8 adds --libReplacement flag to disable automatic inclusion of "
+            "built-in lib.d.ts files. Allows full replacement with custom lib files "
+            "for embedded targets or custom runtimes."
+        ),
+        best_practice=(
+            "Use --libReplacement when targeting non-standard runtimes. "
+            "Provide your own lib.d.ts with only the APIs available in your environment."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts58_preserved_computed_props",
+        tag="TYPESCRIPT_MODERN_58",
+        category="declarations",
+        title="Preserved Computed Property Names in Declarations (TS 5.8)",
+        summary=(
+            "TS 5.8 preserves computed property names (e.g., [Symbol.iterator]) in "
+            "declaration files instead of replacing them with opaque index signatures. "
+            "Improves declaration file readability and downstream type inference."
+        ),
+        best_practice=(
+            "Use named symbol constants for computed properties to get best "
+            "declaration output. Update to TS 5.8+ to benefit from cleaner .d.ts files."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts58_module_node18",
+        tag="TYPESCRIPT_MODERN_58",
+        category="modules",
+        title="--module node18 Stable (TS 5.8)",
+        summary=(
+            "TS 5.8 stabilizes --module node18 which enforces Node.js 18 module "
+            "resolution semantics. Unlike nodenext, it does NOT allow require() of ESM. "
+            "Use for projects targeting Node.js 18 LTS."
+        ),
+        best_practice=(
+            "Use --module node18 for Node.js 18 LTS projects. "
+            "Use --module nodenext for Node.js 22+ projects that need require() of ESM."
+        ),
+        pep_or_rfc="",
     ),
 ]
 

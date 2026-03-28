@@ -193,12 +193,12 @@ class TestKnowledgeStoreCompleteness:
     def test_total_entries(self):
         ks = self._make_store()
         stats = ks.stats()
-        assert stats["total_entries"] >= 38
+        assert stats["total_entries"] >= 48
 
     def test_py314_count(self):
         ks = self._make_store()
         py = ks.query(tag="STANDARD_LIBRARY_PY314")
-        assert len(py) == 13
+        assert len(py) == 20
 
     def test_rust2024_count(self):
         ks = self._make_store()
@@ -208,7 +208,7 @@ class TestKnowledgeStoreCompleteness:
     def test_ts58_count(self):
         ks = self._make_store()
         ts = ks.query(tag="TYPESCRIPT_MODERN_58")
-        assert len(ts) == 15
+        assert len(ts) == 18
 
     def test_special_skills_json_valid(self):
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -216,7 +216,7 @@ class TestKnowledgeStoreCompleteness:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         patterns = data["patterns"]
-        assert len(patterns) == 24
+        assert len(patterns) == 30
         langs = {p["language"] for p in patterns}
         assert "python" in langs
         assert "rust" in langs
@@ -229,7 +229,7 @@ class TestKnowledgeStoreCompleteness:
             data = json.load(f)
         patterns = data["patterns"]
         ts_patterns = [p for p in patterns if p["language"] == "typescript"]
-        assert len(ts_patterns) == 8
+        assert len(ts_patterns) == 10
         ids = {p["pattern_id"] for p in ts_patterns}
         assert "ts58_erasable_syntax" in ids
         assert "ts54_noinfer_utility" in ids

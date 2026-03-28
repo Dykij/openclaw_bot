@@ -400,6 +400,17 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
                 system_prompt += f"\n\n[LATEST BRAIN.md CONTEXT]\n{brain_content}"
             except Exception as e:
                 logger.warning(f"Failed to read BRAIN.md: {e}")
+
+        # v12.1: Inject PROJECT_CONTEXT.md for Planners and Architects
+        ctx_path = os.path.join(framework_root, "PROJECT_CONTEXT.md")
+        if os.path.exists(ctx_path):
+            try:
+                with open(ctx_path, "r", encoding="utf-8") as f:
+                    ctx_content = f.read()
+                ctx_content = sanitize_file_content(ctx_content[:2000])
+                system_prompt += f"\n\n[PROJECT CONTEXT]\n{ctx_content}"
+            except Exception as e:
+                logger.warning(f"Failed to read PROJECT_CONTEXT.md: {e}")
     else:
         system_prompt += _EXECUTOR_PROTOCOL
 
@@ -427,5 +438,17 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
                 system_prompt += f"\n\n[IDENTITY CONTEXT]\n{kill_section.strip()}"
             except Exception as e:
                 logger.warning(f"Failed to read IDENTITY.md: {e}")
+
+    # v12.1: Inject PROJECT_CONTEXT.md for Architects (Planners get it above)
+    if is_architect and not is_planner:
+        ctx_path = os.path.join(framework_root, "PROJECT_CONTEXT.md")
+        if os.path.exists(ctx_path):
+            try:
+                with open(ctx_path, "r", encoding="utf-8") as f:
+                    ctx_content = f.read()
+                ctx_content = sanitize_file_content(ctx_content[:2000])
+                system_prompt += f"\n\n[PROJECT CONTEXT]\n{ctx_content}"
+            except Exception as e:
+                logger.warning(f"Failed to read PROJECT_CONTEXT.md: {e}")
 
     return system_prompt
