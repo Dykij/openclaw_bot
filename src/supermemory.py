@@ -490,6 +490,123 @@ class SuperMemory:
     def is_ready(self) -> bool:
         return self._initialized
 
+    # ------------------------------------------------------------------
+    # v14.0: Complementary RL — Success Trajectory Library
+    # arXiv:2603.17621 — Dilxat Muhtar et al.
+    # ------------------------------------------------------------------
+
+    def save_success_trajectory(
+        self,
+        task: str,
+        chain: List[str],
+        complexity: str,
+        reward: float,
+        response_preview: str = "",
+        tools_used: Optional[List[str]] = None,
+    ) -> str:
+        """Сохраняет «граф решения» успешной сложной задачи в SuperMemory.
+
+        Тегируется source="success_trajectory" для последующего few-shot поиска.
+        Возвращает episode_id, или "" если SuperMemory не инициализирована.
+        """
+        if not self._initialized:
+            return ""
+
+        tools_used = tools_used or []
+        # Записываем эпизод в episodes-таблицу
+        steps = [
+            {"action": role, "result": "success"} for role in chain
+        ]
+        summary = (
+            f"[SUCCESS_TRAJECTORY] chain={' → '.join(chain)} | "
+            f"complexity={complexity} | reward={reward:.2f} | "
+            f"tools={','.join(tools_used) if tools_used else 'none'} | "
+            f"preview={response_preview[:120]}"
+        )
+        episode_id = self.record_episode(
+            task=task,
+            steps=steps,
+            reward=reward,
+            success=True,
+            summary=summary,
+        )
+
+        # Дополнительно кладём в hot-memory для быстрого семантического поиска
+        mem_key = f"trajectory:{episode_id}"
+        self.store(
+            key=mem_key,
+            content=summary,
+            importance=min(1.0, 0.5 + reward * 0.4),
+            source="success_trajectory",
+            tier="warm",
+        )
+        logger.info(
+            "Success trajectory saved",
+            episode_id=episode_id,
+            chain=chain,
+            complexity=complexity,
+            reward=round(reward, 2),
+        )
+        return episode_id
+
+    def recall_similar_trajectories(
+        self,
+        query: str,
+        top_k: int = 3,
+    ) -> str:
+        """Ищет похожие траектории успешных решений для few-shot инжекции в AFlow.
+
+        Возвращает отформатированную строку few-shot-примеров
+        (пустую строку если нет подходящих траекторий).
+        """
+        if not self._initialized:
+            return ""
+
+        # Ищем в episodes среди success_trajectory записей
+        matches: List[tuple[float, EpisodeRecord]] = []
+        query_words = set(w for w in query.lower().split() if len(w) > 3)
+        for ep in self._episodes[:100]:
+            if not ep.success:
+                continue
+            if "[SUCCESS_TRAJECTORY]" not in (ep.summary or ""):
+                continue
+            text_lower = (ep.task + " " + ep.summary).lower()
+            overlap = sum(1 for w in query_words if w in text_lower)
+            if overlap > 0:
+                score = (ep.reward * 0.4) + (overlap / max(len(query_words), 1)) * 0.6
+                matches.append((score, ep))
+
+        # Семантический поиск через RAG — дополняем
+        rag_results = [
+            r for r in self.recall(query, top_k=top_k * 2)
+            if r.source.startswith("rag") and "trajectory" in r.key
+        ]
+        for rag_r in rag_results:
+            # Не дублируем
+            if not any(ep.episode_id == rag_r.key.split(":")[-1] for _, ep in matches):
+                # Создаём синтетический EpisodeRecord из RAG-результата
+                matches.append((rag_r.score, EpisodeRecord(
+                    episode_id=rag_r.key,
+                    task=query[:60],
+                    steps=[],
+                    reward=rag_r.score,
+                    success=True,
+                    summary=rag_r.content,
+                )))
+
+        matches.sort(key=lambda x: -x[0])
+        top_matches = matches[:top_k]
+
+        if not top_matches:
+            return ""
+
+        lines = ["[FEW-SHOT TRAJECTORIES from past successes]"]
+        for i, (score, ep) in enumerate(top_matches, 1):
+            lines.append(f"Example {i} (relevance {score:.2f}):")
+            lines.append(f"  Task: {ep.task[:100]}")
+            lines.append(f"  {ep.summary or 'No summary'}")
+        return "\n".join(lines)
+
     def decay(self, factor: float = 0.95) -> int:
         """Apply time-based importance decay to all tiers. Returns count of decayed items."""
         decayed = 0

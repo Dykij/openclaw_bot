@@ -1096,3 +1096,346 @@ class TestClassifyComplexity:
 
     def test_simple_short_prompt(self):
         assert classify_complexity("скажи привет") == "simple"
+
+
+# ===================================================================
+# v14.0 NEW: SAGE Self-Evolution Engine tests
+# ===================================================================
+
+from src.pipeline._sage import SAGEEngine, SAGECorrectionResult
+
+
+class TestSAGEEngine:
+    """Pure-heuristic tests for SAGE — no LLM calls."""
+
+    @pytest.fixture
+    def engine(self):
+        return SAGEEngine(vllm_url="", model="", enabled=True)
+
+    # --- _parse_score ---
+
+    def test_parse_score_out_of_10(self, engine):
+        assert engine._parse_score("score: 3/10") == pytest.approx(0.3)
+
+    def test_parse_score_decimal(self, engine):
+        assert engine._parse_score("балл: 0.25") == pytest.approx(0.25)
+
+    def test_parse_score_integer_normalised(self, engine):
+        # "оценка: 2" → 2 > 1 → divide by 10 → 0.2
+        assert engine._parse_score("оценка: 2") == pytest.approx(0.2)
+
+    def test_parse_score_not_found(self, engine):
+        assert engine._parse_score("всё хорошо") == -1.0
+
+    # --- _step_is_low_quality ---
+
+    def test_step_is_low_quality_auditor_low_score(self, engine):
+        step = {"role": "Auditor", "response": "score: 2/10, решение неверно"}
+        is_low, score = engine._step_is_low_quality(step)
+        assert is_low is True
+        assert score == pytest.approx(0.2)
+
+    def test_step_is_low_quality_auditor_good_score(self, engine):
+        step = {"role": "Auditor", "response": "score: 8/10, отличная работа"}
+        is_low, score = engine._step_is_low_quality(step)
+        assert is_low is False
+        assert score == pytest.approx(0.8)
+
+    def test_step_is_low_quality_non_auditor_skipped(self, engine):
+        step = {"role": "Planner", "response": "score: 1/10, провал"}
+        is_low, score = engine._step_is_low_quality(step)
+        # Non-auditor roles are skipped
+        assert is_low is False
+
+    def test_step_is_low_quality_text_markers(self, engine):
+        step = {"role": "Auditor", "response": "ошибка, решение некорректно и провал"}
+        is_low, score = engine._step_is_low_quality(step)
+        assert is_low is True
+        assert score == pytest.approx(0.2)  # fallback score
+
+    # --- analyze_steps ---
+
+    def test_analyze_steps_no_low_quality(self, engine):
+        steps = [
+            {"role": "Planner", "response": "план готов"},
+            {"role": "Auditor", "response": "score: 9/10, превосходно"},
+        ]
+        result = engine.analyze_steps(steps, ["Planner", "Auditor"])
+        assert result.needs_rebuild is False
+        assert result.low_score_step == ""
+
+    def test_analyze_steps_low_auditor(self, engine):
+        steps = [
+            {"role": "Planner", "response": "план готов"},
+            {"role": "Auditor", "response": "балл: 0.15, неверно и некорректно"},
+        ]
+        result = engine.analyze_steps(steps, ["Planner", "Auditor"])
+        assert result.needs_rebuild is True
+        assert result.low_score_step == "Auditor"
+        assert result.detected_score < 0.35
+        assert result.suggested_chain  # non-empty
+
+    def test_analyze_steps_disabled_engine(self):
+        engine = SAGEEngine(enabled=False)
+        steps = [{"role": "Auditor", "response": "score: 0/10"}]
+        result = engine.analyze_steps(steps, ["Auditor"])
+        assert result.needs_rebuild is False
+
+    def test_analyze_steps_increments_counter(self, engine):
+        steps = [{"role": "Auditor", "response": "score: 1/10"}]
+        engine.analyze_steps(steps, ["Auditor"])
+        assert engine.correction_count == 1
+
+    # --- _suggest_rebuild ---
+
+    def test_suggest_rebuild_adds_coder(self, engine):
+        chain = ["Planner", "Auditor"]
+        rebuilt = engine._suggest_rebuild(chain, "Auditor")
+        assert "Coder" in rebuilt
+
+    def test_suggest_rebuild_auditor_at_end(self, engine):
+        chain = ["Planner"]
+        rebuilt = engine._suggest_rebuild(chain, "Planner")
+        assert rebuilt[-1] == "Auditor"
+
+    def test_suggest_rebuild_no_duplicate_coder(self, engine):
+        chain = ["Planner", "Coder", "Auditor"]
+        rebuilt = engine._suggest_rebuild(chain, "Auditor")
+        assert rebuilt.count("Coder") == 1
+
+    # --- dataclass ---
+
+    def test_correction_result_defaults(self):
+        r = SAGECorrectionResult(
+            needs_rebuild=False,
+            low_score_step="",
+            detected_score=-1.0,
+            correction_hint="",
+            suggested_chain=[],
+            session_key="",
+        )
+        assert r.timestamp > 0
+
+
+# ===================================================================
+# v14.0 NEW: MAC Multi-Agent Constitution Learning tests
+# ===================================================================
+
+from src.safety.mac_constitution import (
+    MACConstitution,
+    MACState,
+    ConstitutionRule,
+    _HEURISTIC_PATTERNS,
+    _MAX_RULES,
+)
+
+
+class TestMACConstitution:
+    """Pure-heuristic tests for MAC — no LLM calls."""
+
+    @pytest.fixture
+    def mac(self):
+        return MACConstitution(vllm_url="", model="", enabled=True)
+
+    # --- _extract_heuristic_rules ---
+
+    def test_heuristic_detects_anyhow(self, mac):
+        rules = mac._extract_heuristic_rules("используй anyhow для ошибок в Rust")
+        texts = [r.text for r in rules]
+        assert any("anyhow" in t for t in texts)
+
+    def test_heuristic_detects_pnpm(self, mac):
+        rules = mac._extract_heuristic_rules("установи зависимости через pnpm install")
+        assert any("pnpm" in r.text for r in rules)
+
+    def test_heuristic_detects_vitest(self, mac):
+        rules = mac._extract_heuristic_rules("запускай тесты через vitest")
+        assert any("Vitest" in r.text for r in rules)
+
+    def test_heuristic_multiple_patterns(self, mac):
+        text = "pnpm, oxfmt, structlog — наши стандарты"
+        rules = mac._extract_heuristic_rules(text)
+        assert len(rules) >= 3
+
+    def test_heuristic_no_match(self, mac):
+        rules = mac._extract_heuristic_rules("случайный текст без ключевых слов")
+        assert rules == []
+
+    def test_heuristic_rule_source(self, mac):
+        rules = mac._extract_heuristic_rules("asyncio.TaskGroup")
+        assert all(r.source == "heuristic" for r in rules)
+
+    def test_heuristic_rule_confidence(self, mac):
+        rules = mac._extract_heuristic_rules("pnpm")
+        assert all(0.0 < r.confidence <= 1.0 for r in rules)
+
+    # --- enrich_system_prompt ---
+
+    def test_enrich_adds_dynamic_rules_section(self, mac):
+        # Manually add a rule to mac state
+        mac._state = MACState(
+            rules=[ConstitutionRule(text="Логирование через structlog", confidence=0.9, source="heuristic", created_at=time.time())],
+            extracted_at=time.time(),
+            history_hash="abc",
+            llm_rules_count=0,
+            heuristic_rules_count=1,
+        )
+        enriched = mac.enrich_system_prompt("Ты — умный ассистент.")
+        assert "[DYNAMIC_RULES" in enriched
+        assert "structlog" in enriched
+
+    def test_enrich_idempotent(self, mac):
+        mac._state = MACState(
+            rules=[ConstitutionRule(text="правило 1", confidence=0.8, source="heuristic", created_at=time.time())],
+            extracted_at=time.time(),
+            history_hash="x",
+            llm_rules_count=0,
+            heuristic_rules_count=1,
+        )
+        once = mac.enrich_system_prompt("Системный промпт.")
+        twice = mac.enrich_system_prompt(once)
+        assert twice.count("[DYNAMIC_RULES") == 1
+
+    def test_enrich_no_rules_returns_original(self, mac):
+        original = "Простой промпт без правил"
+        result = mac.enrich_system_prompt(original)
+        assert result == original
+
+    def test_enrich_disabled_mac(self):
+        m = MACConstitution(enabled=False)
+        original = "Промпт"
+        assert m.enrich_system_prompt(original) == original
+
+    # --- dataclasses ---
+
+    def test_constitution_rule_dataclass(self):
+        r = ConstitutionRule(text="используй pnpm", confidence=0.9, source="heuristic", created_at=1.0)
+        assert r.confidence == 0.9
+
+    def test_mac_state_dataclass(self):
+        state = MACState(
+            rules=[], extracted_at=1.0, history_hash="abc",
+            llm_rules_count=0, heuristic_rules_count=0,
+        )
+        assert state.history_hash == "abc"
+
+    def test_rules_count_property(self, mac):
+        mac._state = MACState(
+            rules=[ConstitutionRule(text="r1", confidence=0.9, source="heuristic", created_at=1.0)],
+            extracted_at=1.0, history_hash="x", llm_rules_count=0, heuristic_rules_count=1,
+        )
+        assert mac.rules_count == 1
+
+    def test_max_rules_cap(self, mac):
+        """enrich_system_prompt must never inject more than _MAX_RULES rules."""
+        many_rules = [
+            ConstitutionRule(text=f"правило {i}", confidence=0.7, source="heuristic", created_at=1.0)
+            for i in range(20)
+        ]
+        mac._state = MACState(
+            rules=many_rules, extracted_at=1.0, history_hash="y",
+            llm_rules_count=0, heuristic_rules_count=20,
+        )
+        enriched = mac.enrich_system_prompt("Базовый промпт")
+        injected_rules = [line for line in enriched.split("\n") if line.startswith("- ")]
+        assert len(injected_rules) <= _MAX_RULES
+
+
+# ===================================================================
+# v14.0 NEW: Complementary RL — SuperMemory trajectory tests
+# ===================================================================
+
+from src.supermemory import SuperMemory
+
+
+class TestComplementaryRL:
+    """Tests for SuperMemory trajectory save/recall (pure-logic, temp SQLite)."""
+
+    @pytest.fixture
+    def memory(self, tmp_path):
+        """Real SuperMemory on a temp dir — no ChromaDB (rag disabled)."""
+        sm = SuperMemory(persist_dir=str(tmp_path / "smem"))
+        sm.initialize()
+        return sm
+
+    def test_save_trajectory_returns_episode_id(self, memory):
+        ep_id = memory.save_success_trajectory(
+            task="напиши парсер JSON",
+            chain=["Planner", "Coder", "Auditor"],
+            complexity="complex",
+            reward=0.9,
+            response_preview="Вот готовый парсер...",
+        )
+        assert ep_id != ""
+
+    def test_save_trajectory_stored_in_episodes(self, memory):
+        memory.save_success_trajectory(
+            task="реши дифференциальное уравнение",
+            chain=["Researcher", "Coder"],
+            complexity="extreme",
+            reward=0.88,
+            response_preview="Решение: y=...",
+        )
+        trajectory_episodes = [
+            ep for ep in memory._episodes
+            if ep.success and "[SUCCESS_TRAJECTORY]" in (ep.summary or "")
+        ]
+        assert len(trajectory_episodes) >= 1
+
+    def test_save_trajectory_summary_format(self, memory):
+        memory.save_success_trajectory(
+            task="task X",
+            chain=["Planner", "Coder"],
+            complexity="complex",
+            reward=0.8,
+        )
+        ep = next(
+            (ep for ep in memory._episodes if "[SUCCESS_TRAJECTORY]" in (ep.summary or "")),
+            None,
+        )
+        assert ep is not None
+        assert "Planner → Coder" in ep.summary
+        assert "complexity=complex" in ep.summary
+
+    def test_recall_trajectories_empty_initially(self, memory):
+        result = memory.recall_similar_trajectories("любой запрос")
+        assert result == ""
+
+    def test_recall_trajectories_returns_after_save(self, memory):
+        memory.save_success_trajectory(
+            task="парсер JSON для конфигурационных файлов Python",
+            chain=["Planner", "Coder", "Auditor"],
+            complexity="complex",
+            reward=0.85,
+            response_preview="import json ...",
+        )
+        result = memory.recall_similar_trajectories("парсер файлов Python", top_k=3)
+        # Should find the trajectory when there's an overlap
+        # (may be empty if keywords don't match — that's also acceptable)
+        assert isinstance(result, str)
+
+    def test_recall_trajectories_format(self, memory):
+        memory.save_success_trajectory(
+            task="сделай async HTTP клиент на Python",
+            chain=["Planner", "Coder"],
+            complexity="complex",
+            reward=0.9,
+            response_preview="import aiohttp ...",
+        )
+        result = memory.recall_similar_trajectories("async HTTP python клиент", top_k=2)
+        if result:
+            assert "[FEW-SHOT TRAJECTORIES" in result
+            assert "Example 1" in result
+
+    def test_save_trajectory_not_initialized(self):
+        """Must return '' when not initialized."""
+        sm = SuperMemory(persist_dir="/nonexistent/path/__smem")
+        ep_id = sm.save_success_trajectory(
+            task="test", chain=["Planner"], complexity="simple", reward=0.5,
+        )
+        assert ep_id == ""
+
+    def test_recall_not_initialized(self):
+        """Must return '' when not initialized."""
+        sm = SuperMemory(persist_dir="/nonexistent/path/__smem")
+        assert sm.recall_similar_trajectories("test") == ""

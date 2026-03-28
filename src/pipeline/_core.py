@@ -69,7 +69,27 @@ from src.safety.hallucination import MARCHProtocol
 # v13.2: AFlow dynamic chain generation + Ensemble Voting
 from src.pipeline._aflow import AFlowEngine
 
+# v14.0: SAGE self-evolution + MAC constitution
+from src.pipeline._sage import SAGEEngine
+from src.safety.mac_constitution import MACConstitution
+
 logger = structlog.get_logger(__name__)
+
+
+async def _async_save_trajectory(supermemory, prompt, chain, complexity, steps_results, response):
+    """v14.0: Complementary RL — сохранение траектории успешной сложной задачи в SuperMemory."""
+    try:
+        await asyncio.to_thread(
+            supermemory.save_success_trajectory,
+            task=prompt[:200],
+            chain=chain,
+            complexity=complexity,
+            reward=0.85,
+            response_preview=response[:120],
+        )
+        logger.debug("Complementary RL: trajectory saved", chain=chain, complexity=complexity)
+    except Exception as _err:
+        logger.debug("Complementary RL: trajectory save non-fatal error", error=str(_err))
 
 
 class PipelineExecutor:
@@ -159,6 +179,24 @@ class PipelineExecutor:
             vllm_url=self.vllm_url,
             model=aflow_model,
             default_chains=self.default_chains,
+        )
+
+        # v14.0: SAGE self-evolution engine
+        sage_cfg = self.config.get("system", {}).get("sage", {})
+        self._sage = SAGEEngine(
+            vllm_url=self.vllm_url,
+            model=aflow_model,
+            enabled=sage_cfg.get("enabled", True),
+        )
+
+        # v14.0: MAC Dynamic Constitution
+        mac_cfg = self.config.get("system", {}).get("mac", {})
+        self._mac = MACConstitution(
+            vllm_url=self.vllm_url,
+            model=self.config.get("system", {}).get("model_router", {}).get(
+                "expand", "google/gemma-3-12b-it:free"
+            ),
+            enabled=mac_cfg.get("enabled", True),
         )
 
     def _init_supermemory(self) -> None:
@@ -269,6 +307,16 @@ class PipelineExecutor:
             chain = [task_type]
             chain_source = "task_type"
         else:
+            # v14.0: Complementary RL — few-shot trajectories для AFlow
+            _traj_context = ""
+            if self._supermemory and classify_complexity(prompt) in ("complex", "extreme"):
+                try:
+                    _traj_context = self._supermemory.recall_similar_trajectories(prompt, top_k=3)
+                    if _traj_context:
+                        logger.info("Complementary RL: trajectories injected for AFlow")
+                except Exception as _traj_err:
+                    logger.debug("Trajectory recall failed (non-fatal)", error=str(_traj_err))
+
             # v13.2: AFlow — dynamic chain generation
             chain, chain_source = await self.get_chain_dynamic(prompt, brigade, max_steps)
 
@@ -320,6 +368,12 @@ class PipelineExecutor:
 
         memory_context = await self._recall_memory_context(prompt)
 
+        # v14.0: Complementary RL — инжекция few-shot траекторий в начальный контекст
+        if _traj_context and memory_context:
+            memory_context = _traj_context + "\n\n" + memory_context
+        elif _traj_context:
+            memory_context = _traj_context
+
         chain_groups = group_chain(chain)
         steps_results = []
         context_briefing = memory_context
@@ -369,6 +423,12 @@ class PipelineExecutor:
                 system_prompt = build_role_prompt(role_name, role_config, self._framework_root)
 
             is_final_step = (step_index == len(chain) - 1)
+
+            # v14.0: MAC — дополняем system_prompt динамическими правилами проекта
+            try:
+                system_prompt = self._mac.enrich_system_prompt(system_prompt)
+            except Exception as _mac_err:
+                logger.debug("MAC enrichment failed (non-fatal)", error=str(_mac_err))
 
             if step_index == 0:
                 step_prompt = prompt
@@ -669,6 +729,36 @@ class PipelineExecutor:
                         logger.info("MARCH cross-verification passed", rate=march_result.discrepancy_rate)
                 except Exception as e:
                     logger.warning("MARCH verification failed (non-fatal)", error=str(e))
+
+        # v14.0: SAGE — анализ низкокачественных шагов
+        if steps_results:
+            try:
+                sage_result = self._sage.analyze_steps(steps_results, chain)
+                if sage_result.needs_rebuild:
+                    logger.warning(
+                        "SAGE: low-quality step detected — correction saved",
+                        step=sage_result.low_score_step,
+                        score=sage_result.detected_score,
+                        suggested_chain=sage_result.suggested_chain,
+                    )
+                    if self._supermemory:
+                        self._sage.save_to_memory(self._supermemory, sage_result)
+            except Exception as _sage_err:
+                logger.debug("SAGE analysis failed (non-fatal)", error=str(_sage_err))
+
+        # v14.0: Complementary RL — сохраняем траекторию успешных сложных задач
+        _complexity = classify_complexity(prompt)
+        _is_success = final_response and not final_response.startswith("⚠️")
+        if _is_success and _complexity in ("complex", "extreme") and self._supermemory:
+            try:
+                asyncio.ensure_future(
+                    _async_save_trajectory(
+                        self._supermemory, prompt, chain, _complexity,
+                        steps_results, final_response,
+                    )
+                )
+            except Exception as _trl_err:
+                logger.debug("Trajectory save failed (non-fatal)", error=str(_trl_err))
 
         logger.info(f"Pipeline COMPLETE: brigade={brigade}, steps={len(steps_results)}")
 
