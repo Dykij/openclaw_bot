@@ -250,6 +250,42 @@ class DependencyGraphEngine:
         related.discard(rel)
         return sorted(related)
 
+    def get_enriched_context(
+        self,
+        file_path: str,
+        depth: int = 2,
+        knowledge_tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Return graph context enriched with knowledge store entries.
+
+        Combines dependency-graph neighbours with semantic knowledge
+        relevant to the file's language (Python 3.14 / Rust 2024).
+        """
+        from src.memory.knowledge_store import KnowledgeStore
+
+        related_files = self.get_context_for_rag(file_path, depth=depth)
+
+        # Auto-detect relevant knowledge tags from file language
+        if knowledge_tags is None:
+            knowledge_tags = []
+            lang = _detect_language(file_path)
+            if lang == "python":
+                knowledge_tags.append("STANDARD_LIBRARY_PY314")
+            elif lang == "rust":
+                knowledge_tags.append("RUST_STABLE_2026")
+
+        knowledge_context = ""
+        if knowledge_tags:
+            store = KnowledgeStore(self.project_root)
+            store.build()
+            knowledge_context = store.get_context_for_prompt(knowledge_tags)
+
+        return {
+            "file": self._normalize(file_path),
+            "related_files": related_files,
+            "knowledge_context": knowledge_context,
+        }
+
     def stats(self) -> GraphStats:
         """Return summary statistics."""
         lang_counts: Dict[str, int] = defaultdict(int)

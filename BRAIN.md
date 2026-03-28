@@ -21,6 +21,13 @@
 - **Pipeline Executor** (`src/pipeline_executor.py`): Chain-of-Agents (20 roles across 2 brigades)
 - **Safety Stack:** PromptInjectionDefender (5-layer), HallucinationDetector, CodeValidator, AutoRollback
 
+## Recent Changes (2026-03-28 — v12.0-ASCENDED):
+
+- **Knowledge Ascension v12.0**: Deep ingestion of Python 3.14 and Rust 2024 Edition standards
+- **KnowledgeStore** (`src/memory/knowledge_store.py`): Structured knowledge base with 23 entries — 13 Python 3.14 (PEP 649, 734, 750, 758, 765, 768, 784, asyncio, free-threading) + 10 Rust 2024 (RPIT, unsafe extern, gen keyword, never type, IntoIterator for Box)
+- **Enriched Graph-RAG**: `DependencyGraphEngine.get_enriched_context()` auto-injects language-aware knowledge into RAG context
+- **Skills JSON** (`src/ai/agents/special_skills.json`): 16 best-practice patterns with `STANDARD_LIBRARY_PY314` and `RUST_STABLE_2026` tags for FeedbackLoopEngine
+
 ## Recent Changes (2026-03-25):
 
 - Transitioned to OpenRouter as primary LLM provider (vLLM → fallback only)
