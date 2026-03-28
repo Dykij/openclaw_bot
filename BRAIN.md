@@ -23,10 +23,10 @@
 
 ## Recent Changes (2026-03-28 — v12.0-ASCENDED):
 
-- **Knowledge Ascension v12.0**: Deep ingestion of Python 3.14 and Rust 2024 Edition standards
-- **KnowledgeStore** (`src/memory/knowledge_store.py`): Structured knowledge base with 23 entries — 13 Python 3.14 (PEP 649, 734, 750, 758, 765, 768, 784, asyncio, free-threading) + 10 Rust 2024 (RPIT, unsafe extern, gen keyword, never type, IntoIterator for Box)
-- **Enriched Graph-RAG**: `DependencyGraphEngine.get_enriched_context()` auto-injects language-aware knowledge into RAG context
-- **Skills JSON** (`src/ai/agents/special_skills.json`): 16 best-practice patterns with `STANDARD_LIBRARY_PY314` and `RUST_STABLE_2026` tags for FeedbackLoopEngine
+- **Knowledge Ascension v12.0**: Deep ingestion of Python 3.14, Rust 2024 Edition, and TypeScript 5.4–5.8 standards
+- **KnowledgeStore** (`src/memory/knowledge_store.py`): Structured knowledge base with **38 entries** — 13 Python 3.14 (PEP 649, 734, 750, 758, 765, 768, 784, asyncio, free-threading) + 10 Rust 2024 (RPIT, unsafe extern, gen keyword, never type, IntoIterator for Box) + **15 TypeScript 5.4–5.8** (NoInfer, Object.groupBy, Inferred Type Predicates, Isolated Declarations, Iterator Helpers, --rewriteRelativeImportExtensions, --erasableSyntaxOnly, Import Attributes, require() of ESM)
+- **Enriched Graph-RAG**: `DependencyGraphEngine.get_enriched_context()` auto-injects language-aware knowledge — Python → `PY314`, Rust → `RUST2024`, TypeScript/JavaScript → `TYPESCRIPT_MODERN_58`
+- **Skills JSON** (`src/ai/agents/special_skills.json`): **24 best-practice patterns** — `STANDARD_LIBRARY_PY314` (8), `RUST_STABLE_2026` (8), and `TYPESCRIPT_MODERN_58` (8) tags for FeedbackLoopEngine
 
 ## Recent Changes (2026-03-25):
 

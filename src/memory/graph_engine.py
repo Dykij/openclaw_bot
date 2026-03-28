@@ -273,6 +273,8 @@ class DependencyGraphEngine:
                 knowledge_tags.append("STANDARD_LIBRARY_PY314")
             elif lang == "rust":
                 knowledge_tags.append("RUST_STABLE_2026")
+            elif lang in ("typescript", "javascript"):
+                knowledge_tags.append("TYPESCRIPT_MODERN_58")
 
         knowledge_context = ""
         if knowledge_tags:

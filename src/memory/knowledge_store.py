@@ -1,12 +1,14 @@
 """Knowledge Store — Semantic knowledge base for language standards.
 
-Stores structured knowledge entries (Python 3.14, Rust 2024 Edition, etc.)
-so the agent can reference best practices, new APIs, deprecated patterns,
-and migration guidance during code generation and review.
+Stores structured knowledge entries (Python 3.14, Rust 2024 Edition,
+TypeScript 5.4-5.8, etc.) so the agent can reference best practices,
+new APIs, deprecated patterns, and migration guidance during code
+generation and review.
 
 Tags:
   STANDARD_LIBRARY_PY314  — Python 3.14 features & best practices
   RUST_STABLE_2026        — Rust 2024 Edition (1.85+) features & patterns
+  TYPESCRIPT_MODERN_58    — TypeScript 5.4-5.8 features & best practices
 """
 
 from __future__ import annotations
@@ -513,6 +515,366 @@ _RUST2024_ENTRIES: List[KnowledgeEntry] = [
 
 
 # ---------------------------------------------------------------------------
+# Built-in knowledge: TypeScript 5.4-5.8
+# ---------------------------------------------------------------------------
+
+_TS58_ENTRIES: List[KnowledgeEntry] = [
+    KnowledgeEntry(
+        id="ts58_erasable_syntax_only",
+        tag="TYPESCRIPT_MODERN_58",
+        category="compiler",
+        title="--erasableSyntaxOnly for Node.js Type Stripping (TS 5.8)",
+        summary=(
+            "TS 5.8 adds --erasableSyntaxOnly flag for Node.js --experimental-strip-types. "
+            "Bans enums, namespaces with runtime code, and parameter properties — "
+            "only syntax that can be erased by removing type annotations is allowed."
+        ),
+        best_practice=(
+            "Enable --erasableSyntaxOnly when using Node.js type stripping. "
+            "Replace enums with 'as const' objects. "
+            "Replace parameter properties with explicit field assignments. "
+            "Replace namespaces containing runtime code with modules."
+        ),
+        code_example=(
+            "// CORRECT: const object instead of enum\n"
+            "const Direction = { Up: 0, Down: 1 } as const;\n"
+            "type Direction = (typeof Direction)[keyof typeof Direction];\n\n"
+            "// WRONG under --erasableSyntaxOnly:\n"
+            "// enum Direction { Up, Down }  // ERROR\n"
+            "// class Foo { constructor(public x: number) {} }  // ERROR"
+        ),
+        anti_pattern=(
+            "Do NOT use enums, const enums, namespaces with runtime code, "
+            "or parameter properties when --erasableSyntaxOnly is enabled."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts58_import_attributes",
+        tag="TYPESCRIPT_MODERN_58",
+        category="modules",
+        title="Import Attributes (with) Replace Assertions (assert) (TS 5.8)",
+        summary=(
+            "Import attributes use 'with' keyword instead of deprecated 'assert'. "
+            "Required for JSON imports with --module nodenext. "
+            "import ... with { type: 'json' } is the standard syntax."
+        ),
+        best_practice=(
+            "Use 'with' keyword for import attributes: import data from './data.json' with { type: 'json' }. "
+            "Migrate all 'assert' import assertions to 'with' syntax. "
+            "Enable --module nodenext or node18 for proper validation."
+        ),
+        code_example=(
+            "// CORRECT (TS 5.8+):\n"
+            "import data from './config.json' with { type: 'json' };\n\n"
+            "// DEPRECATED:\n"
+            "// import data from './config.json' assert { type: 'json' };"
+        ),
+        anti_pattern="Do NOT use 'assert' for import assertions — use 'with' keyword.",
+        migration_note="Replace all 'assert { type: ... }' with 'with { type: ... }'.",
+        pep_or_rfc="TC39 Import Attributes proposal",
+    ),
+    KnowledgeEntry(
+        id="ts58_require_esm",
+        tag="TYPESCRIPT_MODERN_58",
+        category="modules",
+        title="require() of ESM in --module nodenext (TS 5.8)",
+        summary=(
+            "Node.js 22+ supports require() of synchronous ES modules. "
+            "TS 5.8 with --module nodenext no longer errors on require() of .mts files "
+            "or packages with \"type\": \"module\". require() returns the module namespace."
+        ),
+        best_practice=(
+            "Use --module nodenext with Node.js 22+ to require() ESM modules. "
+            "Ensure target ESM modules don't have top-level await (must be synchronous). "
+            "Use --module node18 to stay on the stricter Node.js 18 behavior."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts58_granular_return_checks",
+        tag="TYPESCRIPT_MODERN_58",
+        category="type_system",
+        title="Granular Return Expression Branch Checks (TS 5.8)",
+        summary=(
+            "TS 5.8 checks each branch of conditional expressions in return statements "
+            "separately against the function return type. This catches bugs where one branch "
+            "returns an incompatible type that was previously masked by union widening."
+        ),
+        best_practice=(
+            "Ensure every branch in ternary/conditional return expressions matches the return type. "
+            "This may surface new errors in existing code — fix by narrowing types per branch."
+        ),
+        code_example=(
+            "function foo(x: boolean): number {\n"
+            "  // TS 5.8 checks each branch independently:\n"
+            "  return x ? 42 : 'oops';  // Error: 'oops' not assignable to number\n"
+            "}"
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts57_rewrite_relative_imports",
+        tag="TYPESCRIPT_MODERN_58",
+        category="compiler",
+        title="--rewriteRelativeImportExtensions (TS 5.7)",
+        summary=(
+            "TS 5.7 adds --rewriteRelativeImportExtensions to rewrite .ts/.tsx/.mts/.cts "
+            "extensions in relative imports to .js/.jsx/.mjs/.cjs during emit. "
+            "Allows writing import './utils.ts' in source code."
+        ),
+        best_practice=(
+            "Use --rewriteRelativeImportExtensions with bundlers or Deno-style imports. "
+            "Only relative imports are rewritten (not bare specifiers). "
+            "Combine with --declaration for proper .d.ts output."
+        ),
+        code_example=(
+            "// Source:\n"
+            "import { helper } from './utils.ts';\n"
+            "// Emitted JS:\n"
+            "import { helper } from './utils.js';"
+        ),
+        anti_pattern=(
+            "Do NOT use .ts extensions in imports without this flag — "
+            "Node.js cannot resolve .ts files at runtime."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts57_target_es2024",
+        tag="TYPESCRIPT_MODERN_58",
+        category="stdlib",
+        title="--target es2024 and SharedArrayBuffer Changes (TS 5.7)",
+        summary=(
+            "TS 5.7 adds --target es2024 / --lib es2024. "
+            "SharedArrayBuffer and ArrayBuffer are now distinct types. "
+            "TypedArrays (Uint8Array, etc.) are generic over ArrayBufferLike. "
+            "Object.groupBy and Map.groupBy available without esnext."
+        ),
+        best_practice=(
+            "Use --target es2024 for Atomics and SharedArrayBuffer support. "
+            "Annotate typed arrays explicitly when dealing with shared buffers: "
+            "Uint8Array<ArrayBuffer> vs Uint8Array<SharedArrayBuffer>."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts57_json_imports",
+        tag="TYPESCRIPT_MODERN_58",
+        category="modules",
+        title="Validated JSON Imports (TS 5.7)",
+        summary=(
+            "JSON imports under --module nodenext now require import attributes: "
+            "import pkg from './data.json' with { type: 'json' }. "
+            "TS validates the JSON content and provides typed access."
+        ),
+        best_practice=(
+            "Always add 'with { type: \"json\" }' when importing JSON under nodenext. "
+            "Enable resolveJsonModule in tsconfig.json."
+        ),
+        code_example=(
+            "import config from './config.json' with { type: 'json' };\n"
+            "console.log(config.version);  // typed access"
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts57_never_initialized",
+        tag="TYPESCRIPT_MODERN_58",
+        category="type_system",
+        title="Never-Initialized Variable Checks (TS 5.7)",
+        summary=(
+            "TS 5.7 flags variables that are never assigned a value but are used. "
+            "Variables declared without initializer and never assigned are now errors."
+        ),
+        best_practice=(
+            "Initialize variables at declaration or ensure assignment before use. "
+            "Use definite assignment assertion (!) only when you're sure of initialization."
+        ),
+        code_example=(
+            "let result: string;\n"
+            "// ... code that may not assign 'result' ...\n"
+            "console.log(result);  // Error: 'result' used before being assigned\n\n"
+            "// Fix: initialize or use definite assignment\n"
+            "let result!: string;  // trust me, it's assigned"
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts56_iterator_helpers",
+        tag="TYPESCRIPT_MODERN_58",
+        category="iterators",
+        title="Iterator Helper Methods & IteratorObject (TS 5.6)",
+        summary=(
+            "TS 5.6 adds IteratorObject and AsyncIteratorObject types for "
+            "TC39 Iterator Helpers (.map, .filter, .take, .drop, .forEach, .toArray, etc.). "
+            "--strictBuiltinIteratorReturn adds BuiltinIteratorReturn for precise typing."
+        ),
+        best_practice=(
+            "Use iterator helper methods for functional-style iteration: "
+            "values.values().filter(x => x > 0).take(5).toArray(). "
+            "Enable --strictBuiltinIteratorReturn for precise iterator typing."
+        ),
+        code_example=(
+            "const nums = [1, 2, 3, 4, 5];\n"
+            "const result = nums.values()\n"
+            "  .filter(n => n % 2 === 0)\n"
+            "  .map(n => n * 10)\n"
+            "  .toArray();  // [20, 40]\n\n"
+            "// Lazy evaluation with take:\n"
+            "function* naturals() { let i = 0; while (true) yield i++; }\n"
+            "const first5 = naturals().take(5).toArray();"
+        ),
+        pep_or_rfc="TC39 Iterator Helpers proposal",
+    ),
+    KnowledgeEntry(
+        id="ts56_nullish_truthy_checks",
+        tag="TYPESCRIPT_MODERN_58",
+        category="type_system",
+        title="Disallowed Nullish/Truthy Checks (TS 5.6)",
+        summary=(
+            "TS 5.6 errors on always-truthy or always-nullish expressions in conditions. "
+            "Catches bugs like 'if (fn)' when fn is always defined, "
+            "or '!== null' on non-nullable types."
+        ),
+        best_practice=(
+            "Fix always-truthy checks: call the function 'if (fn())' instead of 'if (fn)'. "
+            "Remove unnecessary nullish checks on non-nullable types."
+        ),
+        code_example=(
+            "function doWork(fn: () => boolean) {\n"
+            "  if (fn) { }    // Error: always truthy, did you mean fn()?\n"
+            "  if (fn()) { }  // Correct\n"
+            "}"
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts55_inferred_type_predicates",
+        tag="TYPESCRIPT_MODERN_58",
+        category="type_system",
+        title="Inferred Type Predicates (TS 5.5)",
+        summary=(
+            "TS 5.5 automatically infers type predicates for filter callbacks and "
+            "boolean-returning functions. .filter(x => x !== undefined) now properly "
+            "narrows the resulting array type without manual type predicates."
+        ),
+        best_practice=(
+            "Let TS infer type predicates from .filter() callbacks — no explicit 'x is T' needed. "
+            "Use !== undefined/null for filtering, not !! (truthiness can't infer predicates for 0/empty). "
+            "If inferred type is too narrow, add explicit type annotation to the result."
+        ),
+        code_example=(
+            "const items: (string | undefined)[] = ['a', undefined, 'b'];\n"
+            "const defined = items.filter(x => x !== undefined);\n"
+            "// defined: string[]  (TS 5.5+ infers type predicate)\n\n"
+            "// Also inferred for standalone functions:\n"
+            "const isNumber = (x: unknown) => typeof x === 'number';\n"
+            "// inferred: (x: unknown) => x is number"
+        ),
+        anti_pattern=(
+            "Do NOT use !!x for filtering when 0 or '' are valid values — "
+            "TS correctly won't infer a type predicate for truthiness."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts55_isolated_declarations",
+        tag="TYPESCRIPT_MODERN_58",
+        category="compiler",
+        title="Isolated Declarations --isolatedDeclarations (TS 5.5)",
+        summary=(
+            "TS 5.5 adds --isolatedDeclarations for parallel .d.ts generation. "
+            "Requires explicit return types on exports so declaration files can be "
+            "generated without cross-file type-checking. Enables faster builds."
+        ),
+        best_practice=(
+            "Enable --isolatedDeclarations for monorepo/parallel builds. "
+            "Add explicit return type annotations to all exported functions. "
+            "Use the quick-fix to auto-add missing annotations."
+        ),
+        code_example=(
+            "// Required with --isolatedDeclarations:\n"
+            "export function add(a: number, b: number): number {\n"
+            "  return a + b;\n"
+            "}\n\n"
+            "// ERROR: needs explicit return type\n"
+            "// export function add(a: number, b: number) { return a + b; }"
+        ),
+        anti_pattern="Do NOT rely on inference for exported function return types with --isolatedDeclarations.",
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts55_regex_checking",
+        tag="TYPESCRIPT_MODERN_58",
+        category="type_system",
+        title="Regular Expression Syntax Checking (TS 5.5)",
+        summary=(
+            "TS 5.5 validates regex literals at compile time — catching unmatched "
+            "parentheses, invalid backreferences, nonexistent named groups, and "
+            "ECMAScript-version-incompatible features."
+        ),
+        best_practice=(
+            "Use regex literals instead of new RegExp('...') for compile-time checking. "
+            "Fix invalid backreferences and named group references flagged by TS."
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts54_noinfer",
+        tag="TYPESCRIPT_MODERN_58",
+        category="type_system",
+        title="NoInfer<T> Utility Type (TS 5.4)",
+        summary=(
+            "TS 5.4 adds NoInfer<T> to prevent type inference at specific positions "
+            "in generic function signatures. Useful for 'default' parameters that "
+            "should match but not widen the inferred type."
+        ),
+        best_practice=(
+            "Wrap parameter types with NoInfer<T> to exclude them from inference. "
+            "Use for default/fallback parameters in generic functions."
+        ),
+        code_example=(
+            "function createList<T extends string>(\n"
+            "  items: T[],\n"
+            "  defaultItem?: NoInfer<T>,\n"
+            "): T[] {\n"
+            "  return items;\n"
+            "}\n"
+            "createList(['a', 'b'], 'c');  // Error: 'c' not in 'a' | 'b'"
+        ),
+        pep_or_rfc="",
+    ),
+    KnowledgeEntry(
+        id="ts55_set_methods",
+        tag="TYPESCRIPT_MODERN_58",
+        category="stdlib",
+        title="ECMAScript Set Methods (TS 5.5)",
+        summary=(
+            "TS 5.5 adds declarations for Set.prototype.union, intersection, difference, "
+            "symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom. "
+            "Available under --target esnext or --lib esnext."
+        ),
+        best_practice=(
+            "Use native Set methods instead of manual loops for set operations. "
+            "All methods return new Sets (immutable pattern). "
+            "Use --target es2024 or esnext to access these methods."
+        ),
+        code_example=(
+            "const a = new Set([1, 2, 3]);\n"
+            "const b = new Set([2, 3, 4]);\n"
+            "a.union(b);              // Set {1, 2, 3, 4}\n"
+            "a.intersection(b);       // Set {2, 3}\n"
+            "a.difference(b);         // Set {1}\n"
+            "a.symmetricDifference(b); // Set {1, 4}\n"
+            "a.isSubsetOf(b);         // false"
+        ),
+        pep_or_rfc="TC39 Set Methods proposal",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # Knowledge Store
 # ---------------------------------------------------------------------------
 
@@ -540,7 +902,7 @@ class KnowledgeStore:
     def build(self) -> KnowledgeIndex:
         """Load built-in knowledge entries and any previously saved ones."""
         # Start with built-in knowledge
-        built_in = _PY314_ENTRIES + _RUST2024_ENTRIES
+        built_in = _PY314_ENTRIES + _RUST2024_ENTRIES + _TS58_ENTRIES
         existing_ids: Set[str] = set()
 
         # Load previously saved entries
@@ -567,6 +929,7 @@ class KnowledgeStore:
             total_entries=len(self.index.entries),
             py314=sum(1 for e in self.index.entries if e.tag == "STANDARD_LIBRARY_PY314"),
             rust2024=sum(1 for e in self.index.entries if e.tag == "RUST_STABLE_2026"),
+            ts58=sum(1 for e in self.index.entries if e.tag == "TYPESCRIPT_MODERN_58"),
         )
         return self.index
 

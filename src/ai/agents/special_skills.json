@@ -191,6 +191,102 @@
       "tags": ["async", "prelude", "rust2024", "RUST_STABLE_2026"],
       "created_at": 1753228800.0,
       "use_count": 0
+    },
+    {
+      "pattern_id": "ts58_erasable_syntax",
+      "description": "TS 5.8 --erasableSyntaxOnly: Replace enums with 'as const' objects and parameter properties with field assignments for Node.js type stripping.",
+      "language": "typescript",
+      "code_snippet": "// Replace enum with as-const object\nconst Status = { Active: 'active', Inactive: 'inactive' } as const;\ntype Status = (typeof Status)[keyof typeof Status];\n\n// Replace parameter property:\nclass Service {\n  private config: Config;\n  constructor(config: Config) { this.config = config; }",
+      "source_file": "knowledge_store/ts58",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.95,
+      "tags": ["enums", "compiler", "typescript58", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "ts58_import_attributes",
+      "description": "TS 5.8: Use 'with' keyword for import attributes (JSON, etc.) instead of deprecated 'assert'. Required for --module nodenext.",
+      "language": "typescript",
+      "code_snippet": "// CORRECT: import attributes with 'with'\nimport config from './config.json' with { type: 'json' };\n\n// DEPRECATED: do not use 'assert'\n// import config from './config.json' assert { type: 'json' };",
+      "source_file": "knowledge_store/ts58",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.9,
+      "tags": ["modules", "imports", "typescript58", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "ts57_rewrite_import_extensions",
+      "description": "TS 5.7 --rewriteRelativeImportExtensions: Write imports with .ts extensions; compiler rewrites to .js for emit. Works with Deno-style imports.",
+      "language": "typescript",
+      "code_snippet": "// Source (write .ts in imports):\nimport { helper } from './utils.ts';\nimport { config } from '../config.mts';\n\n// Emitted JS (auto-rewritten):\n// import { helper } from './utils.js';\n// import { config } from '../config.mjs';",
+      "source_file": "knowledge_store/ts57",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.9,
+      "tags": ["modules", "imports", "compiler", "typescript57", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "ts56_iterator_helpers",
+      "description": "TS 5.6 Iterator Helpers: Use .map(), .filter(), .take(), .drop(), .toArray() on iterators for functional-style lazy evaluation with IteratorObject type.",
+      "language": "typescript",
+      "code_snippet": "function* fibonacci(): IterableIterator<number> {\n  let [a, b] = [0, 1];\n  while (true) { yield a; [a, b] = [b, a + b]; }\n}\n\nconst first10Even = fibonacci()\n  .filter(n => n % 2 === 0)\n  .take(10)\n  .toArray();",
+      "source_file": "knowledge_store/ts56",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.95,
+      "tags": ["iterators", "functional", "typescript56", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "ts55_inferred_predicates",
+      "description": "TS 5.5 Inferred Type Predicates: .filter(x => x !== undefined) now narrows array types automatically. Use !== undefined instead of !! for correct inference.",
+      "language": "typescript",
+      "code_snippet": "const items: (string | null)[] = ['a', null, 'b'];\n\n// TS 5.5: automatically narrows to string[]\nconst defined = items.filter(x => x !== null);\n// defined: string[]\n\n// WRONG: truthiness can't infer for 0 or ''\n// items.filter(x => !!x)  // no type predicate inferred",
+      "source_file": "knowledge_store/ts55",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.95,
+      "tags": ["type_system", "narrowing", "typescript55", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "ts55_isolated_declarations",
+      "description": "TS 5.5 --isolatedDeclarations: Enables parallel .d.ts generation for monorepos. Requires explicit return types on all exports.",
+      "language": "typescript",
+      "code_snippet": "// Required: explicit return type on exported function\nexport function calculate(a: number, b: number): number {\n  return a + b;\n}\n\n// ERROR with --isolatedDeclarations:\n// export function calculate(a: number, b: number) {\n//   return a + b;  // needs explicit return type\n// }",
+      "source_file": "knowledge_store/ts55",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.9,
+      "tags": ["compiler", "declarations", "monorepo", "typescript55", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "ts54_noinfer_utility",
+      "description": "TS 5.4 NoInfer<T>: Prevent type widening on 'default' or 'fallback' generic params. Object.groupBy/Map.groupBy available with --lib esnext.",
+      "language": "typescript",
+      "code_snippet": "// NoInfer prevents 'blue' from widening C\nfunction pickColor<C extends string>(\n  colors: C[],\n  fallback?: NoInfer<C>,\n) { return fallback ?? colors[0]; }\n\npickColor(['red', 'green'], 'blue');  // Error!\n\n// Object.groupBy:\nconst grouped = Object.groupBy([1,2,3,4], n => n % 2 ? 'odd' : 'even');",
+      "source_file": "knowledge_store/ts54",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.9,
+      "tags": ["generics", "type_system", "typescript54", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "ts55_set_methods",
+      "description": "TS 5.5 ECMAScript Set Methods: Use native Set.union(), .intersection(), .difference(), .symmetricDifference(), .isSubsetOf() instead of manual loops.",
+      "language": "typescript",
+      "code_snippet": "const users = new Set(['alice', 'bob', 'carol']);\nconst admins = new Set(['bob', 'dave']);\n\nconst allPeople = users.union(admins);          // Set {'alice','bob','carol','dave'}\nconst adminUsers = users.intersection(admins);  // Set {'bob'}\nconst nonAdmins = users.difference(admins);     // Set {'alice','carol'}",
+      "source_file": "knowledge_store/ts55",
+      "commit_hash": "v12.0-ASCENDED",
+      "score": 0.85,
+      "tags": ["stdlib", "collections", "typescript55", "TYPESCRIPT_MODERN_58"],
+      "created_at": 1753228800.0,
+      "use_count": 0
     }
   ]
 }
