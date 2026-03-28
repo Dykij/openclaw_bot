@@ -1,19 +1,30 @@
 """
-Parsers package — Multi-source data parsers for OpenClaw Bot.
+Parsers package — Universal Research Engine for OpenClaw Bot v11.6.
 
-Each parser provides async `fetch_*` functions that return structured data
-for ingestion by SuperMemory/RAG and Deep Research pipelines.
+All sources are accessed through the UniversalParser orchestrator or
+individual SourceAdapter instances.
 """
 
-from src.parsers.habr import fetch_habr_articles, HabrArticle
-from src.parsers.reddit import fetch_reddit_posts, RedditPost
-from src.parsers.github import fetch_github_trending, GitHubRepo
+from src.parsers.universal import (
+    ArxivAdapter,
+    GitHubAdapter,
+    HabrAdapter,
+    OpenAlexAdapter,
+    RedditAdapter,
+    ResearchItem,
+    SemanticScholarAdapter,
+    SourceAdapter,
+    UniversalParser,
+)
 
 __all__ = [
-    "fetch_habr_articles",
-    "HabrArticle",
-    "fetch_reddit_posts",
-    "RedditPost",
-    "fetch_github_trending",
-    "GitHubRepo",
+    "UniversalParser",
+    "ResearchItem",
+    "SourceAdapter",
+    "HabrAdapter",
+    "GitHubAdapter",
+    "RedditAdapter",
+    "SemanticScholarAdapter",
+    "ArxivAdapter",
+    "OpenAlexAdapter",
 ]
