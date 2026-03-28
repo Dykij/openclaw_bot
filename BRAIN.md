@@ -21,6 +21,14 @@
 - **Pipeline Executor** (`src/pipeline_executor.py`): Chain-of-Agents (20 roles across 2 brigades)
 - **Safety Stack:** PromptInjectionDefender (5-layer), HallucinationDetector, CodeValidator, AutoRollback
 
+## Recent Changes (2026-03-28 — v12.1-CODING-ENGINE):
+
+- **Coding Engine Upgrade v12.1**: Pipeline roles принудительно используют современные стандарты из KnowledgeStore
+- **Knowledge Injection** (`pipeline_utils.py`): `build_role_prompt()` инъектирует \_KNOWLEDGE_INJECTION_CODER для ролей Coder/Executor_Architect/Test_Writer (PY314+Rust2024+TS5.8 директивы) и \_KNOWLEDGE_INJECTION_ARCHITECT для Planner/Architect/Foreman (concurrent.interpreters, Async Traits, --isolatedDeclarations)
+- **Knowledge-First RAG** (`pipeline/_state.py`): `recall_memory_context()` автоматически подтягивает знания из KnowledgeStore по ключевым словам (async→PY314+RUST2026, typescript→TS58, код/напиши/рефактор→все теги)
+- **Sandbox Modernization** (`tools/dynamic_sandbox.py`): Docker образ обновлён до `python:3.14-slim`, добавлены `node:22-slim` (TypeScript) и `rust:1.85-slim` (Rust), принудительный `edition = "2024"` в Cargo.toml, target es2024 для TS
+- **Syntactic Evolution Test** (`tests/test_syntactic_evolution.py`): 28 тестов — верификация Knowledge Injection, Sandbox, Knowledge-First RAG, KnowledgeStore completeness
+
 ## Recent Changes (2026-03-28 — v12.0-ASCENDED):
 
 - **Knowledge Ascension v12.0**: Deep ingestion of Python 3.14, Rust 2024 Edition, and TypeScript 5.4–5.8 standards

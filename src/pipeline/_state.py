@@ -9,6 +9,7 @@ import structlog
 from src.ai.inference.router import SmartModelRouter
 from src.ai.inference._shared import ModelProfile
 from src.memory.graph_engine import DependencyGraphEngine
+from src.memory.knowledge_store import KnowledgeStore
 
 logger = structlog.get_logger(__name__)
 
@@ -144,6 +145,51 @@ async def recall_memory_context(executor, prompt: str) -> str:
                     fragments.append(f"[Graph-RAG/{fref}] {graph_ctx[:400]}")
         except Exception as e:
             logger.debug("Graph-RAG context failed", error=str(e))
+
+    # v12.1: Knowledge-First — auto-inject modern standards from KnowledgeStore
+    try:
+        _knowledge_keywords = {
+            "async": ["STANDARD_LIBRARY_PY314", "RUST_STABLE_2026"],
+            "concurrent": ["STANDARD_LIBRARY_PY314"],
+            "interpreters": ["STANDARD_LIBRARY_PY314"],
+            "type": ["STANDARD_LIBRARY_PY314", "TYPESCRIPT_MODERN_58"],
+            "annotation": ["STANDARD_LIBRARY_PY314"],
+            "template": ["STANDARD_LIBRARY_PY314", "TYPESCRIPT_MODERN_58"],
+            "t-string": ["STANDARD_LIBRARY_PY314"],
+            "enum": ["TYPESCRIPT_MODERN_58", "RUST_STABLE_2026"],
+            "import": ["TYPESCRIPT_MODERN_58"],
+            "iterator": ["TYPESCRIPT_MODERN_58", "RUST_STABLE_2026"],
+            "unsafe": ["RUST_STABLE_2026"],
+            "extern": ["RUST_STABLE_2026"],
+            "match": ["RUST_STABLE_2026"],
+            "lifetime": ["RUST_STABLE_2026"],
+            "impl trait": ["RUST_STABLE_2026"],
+            "typescript": ["TYPESCRIPT_MODERN_58"],
+            "noinfer": ["TYPESCRIPT_MODERN_58"],
+            "set": ["TYPESCRIPT_MODERN_58"],
+            "groupby": ["TYPESCRIPT_MODERN_58"],
+            "python": ["STANDARD_LIBRARY_PY314"],
+            "rust": ["RUST_STABLE_2026"],
+            "код": ["STANDARD_LIBRARY_PY314", "RUST_STABLE_2026", "TYPESCRIPT_MODERN_58"],
+            "напиши": ["STANDARD_LIBRARY_PY314", "RUST_STABLE_2026", "TYPESCRIPT_MODERN_58"],
+            "рефактор": ["STANDARD_LIBRARY_PY314", "RUST_STABLE_2026", "TYPESCRIPT_MODERN_58"],
+        }
+        prompt_lower = prompt.lower()
+        matched_tags: set[str] = set()
+        for kw, tags in _knowledge_keywords.items():
+            if kw in prompt_lower:
+                matched_tags.update(tags)
+
+        if matched_tags:
+            framework_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            ks = KnowledgeStore(project_root=framework_root)
+            ks.build()
+            knowledge_ctx = ks.get_context_for_prompt(list(matched_tags), max_entries=8)
+            if knowledge_ctx:
+                fragments.append(f"[KnowledgeStore v12.1] {knowledge_ctx[:1200]}")
+                logger.info("Knowledge-First recall injected", tags=list(matched_tags))
+    except Exception as e:
+        logger.debug("Knowledge-First recall failed", error=str(e))
 
     if not fragments:
         return ""

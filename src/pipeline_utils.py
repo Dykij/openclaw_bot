@@ -198,6 +198,16 @@ def sanitize_file_content(content: str) -> str:
 
 # Static protocol fragments — kept as module-level constants so vLLM prefix caching
 # can reuse KV-cache across requests that share the same system prompt prefix.
+
+# Compact Kill List injected into ALL roles — prevents robotic phrasing
+_KILL_LIST = (
+    "\n\n[KILL LIST — ЗАПРЕЩЁННЫЕ КОНСТРУКЦИИ]"
+    "\nНИКОГДА не используй: «Я как языковая модель», «Относительно моей архитектуры», "
+    "«С точки зрения восприятия», философствования о цифровой природе."
+    "\nНе генерируй сухие нумерованные списки там, где нужен связный живой текст."
+    "\nПиши аутентично, с лёгким профессиональным сленгом."
+    "\nАвтокоррекция: если начинаешь звучать как робот — одёрни себя и перефразируй."
+)
 _ARCHIVIST_PROTOCOL = (
     "\n\n[ARCHIVIST PROTOCOL: CRITIC + FORMATTER]"
     "\nТы получаешь технический вывод от предыдущего агента."
@@ -240,6 +250,63 @@ _EXECUTOR_PROTOCOL = (
     "\n- При sandbox_execute: генерируй минимальный код, проверяй успешность по exit_code."
     "\n- При ошибке sandbox: проанализируй stderr, исправь код и повтори (макс. 3 попытки)."
     "\nЯзык ответа: РУССКИЙ."
+)
+
+_KNOWLEDGE_INJECTION_CODER = (
+    "\n\n[KNOWLEDGE INJECTION — v12.1 MODERN STANDARDS]\n"
+    "ОБЯЗАТЕЛЬНО применяй СОВРЕМЕННЫЕ стандарты языков при генерации кода:\n"
+    "\n"
+    "Python 3.14:\n"
+    "- Используй Deferred Evaluation (PEP 649): убери кавычки с forward-reference аннотаций.\n"
+    "- Используй t-strings (PEP 750) для санитизации пользовательского ввода вместо f-strings.\n"
+    "- Используй concurrent.interpreters (PEP 734) / InterpreterPoolExecutor для CPU-параллелизма.\n"
+    "- Предпочитай compression.zstd вместо third-party zstandard.\n"
+    "- Используй 'except ValueError, TypeError:' без скобок (PEP 758).\n"
+    "- Используй int | str вместо Union[int, str].\n"
+    "- Используй functools.Placeholder для частичного применения.\n"
+    "\n"
+    "Rust 2024 Edition:\n"
+    "- Используй use<..> вместо Captures trick для RPIT lifetimes (RFC 3498).\n"
+    "- Всегда пиши 'unsafe extern' для extern блоков (RFC 3484).\n"
+    "- Используй #[unsafe(no_mangle)] вместо #[no_mangle].\n"
+    "- Не создавай ссылки на static mut — используй addr_of!().\n"
+    "- Помни: gen — зарезервированное слово, Box<[T]>.into_iter() возвращает owned T.\n"
+    "- Используй Async Traits (в прелюдии 2024: Future, IntoFuture).\n"
+    "\n"
+    "TypeScript 5.8:\n"
+    "- Используй 'as const' объекты вместо enums при --erasableSyntaxOnly.\n"
+    "- Используй import ... with { type: 'json' } вместо assert.\n"
+    "- Используй NoInfer<T> для контроля вывода типов generic-параметров.\n"
+    "- Используй Iterator Helpers (.map/.filter/.take на IteratorObject).\n"
+    "- Используй --rewriteRelativeImportExtensions для import './file.ts'.\n"
+    "- Используй --isolatedDeclarations: явные return types на exports.\n"
+    "- Используй нативные Set.union/intersection/difference/symmetricDifference.\n"
+    "- Используй inferred type predicates в .filter() callbacks.\n"
+    "\n"
+    "ПРОВЕРЯЙ соответствие паттернам из special_skills.json перед финализацией кода.\n"
+    "Код должен НЕ компилироваться на Python 3.10 / Rust 2021 / TypeScript 5.3 — это ЦЕЛЬ.\n"
+)
+
+_KNOWLEDGE_INJECTION_ARCHITECT = (
+    "\n\n[KNOWLEDGE INJECTION — v12.1 ARCHITECTURE STANDARDS]\n"
+    "При проектировании систем ОБЯЗАТЕЛЬНО учитывай:\n"
+    "\n"
+    "Python 3.14:\n"
+    "- Проектируй CPU-интенсивные части с concurrent.interpreters (PEP 734) для обхода GIL.\n"
+    "- Используй InterpreterPoolExecutor вместо ProcessPoolExecutor для меньшего overhead.\n"
+    "- Используй Free-Threaded Python (PEP 703/779) для true parallelism в IO+CPU mix.\n"
+    "- Используй sys.remote_exec() (PEP 768) для production debugging без перезапуска.\n"
+    "\n"
+    "Rust 2024:\n"
+    "- Проектируй Async Traits с Future/IntoFuture из прелюдии 2024.\n"
+    "- Используй use<..> bounds для управления lifetimes в RPIT.\n"
+    "- Предпочитай std::sync::Mutex/OnceLock/Atomic вместо static mut.\n"
+    "\n"
+    "TypeScript 5.8:\n"
+    "- Проектируй модули с --module nodenext и Import Attributes (with).\n"
+    "- Используй --erasableSyntaxOnly для совместимости с Node.js type stripping.\n"
+    "- Используй --isolatedDeclarations для параллельной emit генерации.\n"
+    "- Проектируй типовую систему с NoInfer<T> для строгого вывода generics.\n"
 )
 
 _AUDITOR_PROTOCOL = (
@@ -335,5 +402,30 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
                 logger.warning(f"Failed to read BRAIN.md: {e}")
     else:
         system_prompt += _EXECUTOR_PROTOCOL
+
+    # v12.1: Knowledge Injection for code-producing roles
+    is_coder = any(tag in role_name for tag in ["Coder", "Executor_Architect", "Executor_Tools", "Test_Writer"])
+    is_architect = any(tag in role_name for tag in ["Architect", "Planner", "Foreman"])
+    if is_coder:
+        system_prompt += _KNOWLEDGE_INJECTION_CODER
+    elif is_architect:
+        system_prompt += _KNOWLEDGE_INJECTION_ARCHITECT
+
+    # Inject Kill List into ALL roles for persona consistency
+    system_prompt += _KILL_LIST
+
+    # Inject IDENTITY.md persona cues for Archivists (human-readable output) and Planners
+    if is_archivist or is_planner:
+        identity_path = os.path.join(framework_root, "IDENTITY.md")
+        if os.path.exists(identity_path):
+            try:
+                with open(identity_path, "r", encoding="utf-8") as f:
+                    raw = f.read()
+                # Extract only Kill List + primary persona section (compact)
+                kill_section = raw.split("## 1.")[0] if "## 1." in raw else raw[:600]
+                kill_section = sanitize_file_content(kill_section[:800])
+                system_prompt += f"\n\n[IDENTITY CONTEXT]\n{kill_section.strip()}"
+            except Exception as e:
+                logger.warning(f"Failed to read IDENTITY.md: {e}")
 
     return system_prompt

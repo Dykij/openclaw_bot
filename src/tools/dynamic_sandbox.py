@@ -42,12 +42,16 @@ logger = structlog.get_logger("DynamicSandbox")
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-_DOCKER_IMAGE = "python:3.12-slim"
+_DOCKER_IMAGE = "python:3.14-slim"
+_DOCKER_IMAGE_TS = "node:22-slim"
+_DOCKER_IMAGE_RUST = "rust:1.85-slim"
 _DOCKER_TIMEOUT_SEC = 60
 _DOCKER_MEM_LIMIT = "256m"
 _DOCKER_CPU_QUOTA = 50_000  # 50% of one core
 _MAX_OUTPUT_CHARS = 32_000
 _SKILL_DIR_NAME = "local_skills"
+_RUST_EDITION = "2024"
+_TS_TARGET = "es2024"
 
 # Safety: patterns that must never appear in generated code
 _CODE_DENY_PATTERNS: list[re.Pattern] = [
@@ -153,14 +157,39 @@ async def _run_in_docker(
     script_hash = hashlib.sha256(code.encode()).hexdigest()
 
     with tempfile.TemporaryDirectory(prefix="openclaw_sandbox_") as tmpdir:
-        ext = ".py" if language == "python" else ".sh"
+        _ext_map = {"python": ".py", "typescript": ".ts", "rust": ".rs"}
+        ext = _ext_map.get(language, ".sh")
         script_path = os.path.join(tmpdir, f"task{ext}")
+
+        # Rust: generate Cargo.toml with edition 2024 for proper project sandbox
+        if language == "rust":
+            cargo_toml = (
+                "[package]\n"
+                f'name = "sandbox_task"\n'
+                f'version = "0.1.0"\n'
+                f'edition = "{_RUST_EDITION}"\n'
+            )
+            with open(os.path.join(tmpdir, "Cargo.toml"), "w", encoding="utf-8") as f:
+                f.write(cargo_toml)
+
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
 
         if language == "python":
             cmd_inside = ["python3", f"/sandbox/task{ext}"]
             image = _DOCKER_IMAGE
+        elif language == "typescript":
+            cmd_inside = ["npx", "--yes", "tsx", f"/sandbox/task{ext}"]
+            image = _DOCKER_IMAGE_TS
+        elif language == "rust":
+            cmd_inside = ["bash", "-c", f"cd /sandbox && rustc --edition {_RUST_EDITION} task{ext} -o /tmp/out && /tmp/out"]
+            image = _DOCKER_IMAGE_RUST
+        elif language == "typescript":
+            cmd_inside = ["npx", "--yes", "tsx", f"/sandbox/task{ext}"]
+            image = _DOCKER_IMAGE_TS
+        elif language == "rust":
+            cmd_inside = ["bash", "-c", f"cd /sandbox && rustc --edition {_RUST_EDITION} task{ext} -o /tmp/out && /tmp/out"]
+            image = _DOCKER_IMAGE_RUST
         else:
             cmd_inside = ["bash", f"/sandbox/task{ext}"]
             image = "bash:5"
@@ -248,13 +277,30 @@ async def _run_in_subprocess(
     script_hash = hashlib.sha256(code.encode()).hexdigest()
 
     with tempfile.TemporaryDirectory(prefix="openclaw_sandbox_") as tmpdir:
-        ext = ".py" if language == "python" else ".sh"
+        _ext_map = {"python": ".py", "typescript": ".ts", "rust": ".rs"}
+        ext = _ext_map.get(language, ".sh")
         script_path = os.path.join(tmpdir, f"task{ext}")
+
+        if language == "rust":
+            cargo_toml = (
+                "[package]\n"
+                f'name = "sandbox_task"\n'
+                f'version = "0.1.0"\n'
+                f'edition = "{_RUST_EDITION}"\n'
+            )
+            with open(os.path.join(tmpdir, "Cargo.toml"), "w", encoding="utf-8") as f:
+                f.write(cargo_toml)
+
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
 
         if language == "python":
             args = ["python3" if os.name != "nt" else "python", script_path]
+        elif language == "typescript":
+            args = ["npx", "--yes", "tsx", script_path]
+        elif language == "rust":
+            out_bin = os.path.join(tmpdir, "out.exe" if os.name == "nt" else "out")
+            args = ["bash", "-c", f"rustc --edition {_RUST_EDITION} {script_path} -o {out_bin} && {out_bin}"]
         else:
             args = ["bash", script_path]
 
