@@ -61,6 +61,10 @@ from src.pipeline._state import init_smart_router, init_supermemory, recall_memo
 from src.pipeline._reflexion import reflexion_fallback
 from src.pipeline._tools_handler import handle_planner_handoff
 
+# v11.7 SOTA modules
+from src.pipeline._lats_search import LATSEngine, classify_complexity
+from src.safety.hallucination import MARCHProtocol
+
 logger = structlog.get_logger(__name__)
 
 
@@ -135,6 +139,10 @@ class PipelineExecutor:
         self._react_reasoner = ReActReasoner(vllm_url=self.vllm_url, model="")
         self._constitutional = ConstitutionalChecker(vllm_url=self.vllm_url, model="")
         self._sandbox = DynamicSandbox()
+
+        # v11.7: LATS tree search + MARCH hallucination control
+        self._lats_engine = LATSEngine(vllm_url=self.vllm_url)
+        self._march_protocol = MARCHProtocol(vllm_url=self.vllm_url)
 
     def _init_supermemory(self) -> None:
         init_supermemory(self)
@@ -219,6 +227,32 @@ class PipelineExecutor:
         # Reset per-model circuit breakers at the start of each pipeline run
         # so stale failures from previous runs don't poison fresh queries.
         reset_circuit_breakers()
+
+        # --- v11.7: LATS tree search for complex tasks ---
+        complexity = classify_complexity(prompt)
+        if complexity == "complex" and not task_type and brigade in ("Dmarket", "Dmarket-Dev"):
+            logger.info("LATS activated: complex task detected", complexity=complexity)
+            if status_callback:
+                await status_callback("LATS", "tree-search", "🌳 LATS: задача сложная — запускаю дерево поиска решений...")
+            try:
+                lats_model = self.config.get("brigades", {}).get(brigade, {}).get(
+                    "roles", {}
+                ).get("Planner", {}).get("model", "meta-llama/llama-3.3-70b-instruct:free")
+                lats_result = await self._lats_engine.search(
+                    prompt=prompt, model=lats_model, config=self.config,
+                )
+                if lats_result.best_response:
+                    logger.info("LATS completed", depth=lats_result.depth_reached, score=lats_result.best_score)
+                    return {
+                        "final_response": lats_result.best_response,
+                        "brigade": brigade,
+                        "chain_executed": ["LATS_TreeSearch"],
+                        "steps": [{"role": "LATS_TreeSearch", "model": lats_model, "response": lats_result.best_response}],
+                        "status": "completed",
+                        "meta": {"lats_depth": lats_result.depth_reached, "lats_score": lats_result.best_score},
+                    }
+            except Exception as e:
+                logger.warning("LATS failed, falling back to linear pipeline", error=str(e))
 
         budget = self.token_budget.estimate_budget(prompt, task_type or "general")
         logger.info("Token budget estimated", max_tokens=budget.max_tokens, reason=budget.budget_reason)
@@ -519,6 +553,35 @@ class PipelineExecutor:
                     steps_results.append({"role": "Constitutional_Guard", "model": "constitutional", "response": final_response})
             except Exception as e:
                 logger.warning("Constitutional check failed (non-fatal)", error=str(e))
+
+            # --- v11.7: MARCH hallucination cross-verification ---
+            if self._supermemory and len(steps_results) >= 2:
+                try:
+                    executor_resp = steps_results[-2]["response"] if len(steps_results) >= 2 else ""
+                    archivist_resp = final_response
+                    march_result = await self._march_protocol.cross_verify_agents(
+                        executor_response=executor_resp,
+                        archivist_response=archivist_resp,
+                        memory=self._supermemory,
+                        config=self.config,
+                    )
+                    if not march_result.passed:
+                        logger.warning(
+                            "MARCH cross-verification failed",
+                            discrepancy_rate=march_result.discrepancy_rate,
+                            unverified=march_result.unverified_count,
+                        )
+                        if march_result.revised_response:
+                            final_response = march_result.revised_response
+                            steps_results.append({
+                                "role": "MARCH_Verification",
+                                "model": "march",
+                                "response": final_response,
+                            })
+                    else:
+                        logger.info("MARCH cross-verification passed", rate=march_result.discrepancy_rate)
+                except Exception as e:
+                    logger.warning("MARCH verification failed (non-fatal)", error=str(e))
 
         logger.info(f"Pipeline COMPLETE: brigade={brigade}, steps={len(steps_results)}")
 

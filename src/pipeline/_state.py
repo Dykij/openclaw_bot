@@ -1,12 +1,14 @@
-"""Pipeline state management — SuperMemory, RAG, SmartModelRouter initialization."""
+"""Pipeline state management — SuperMemory, RAG, SmartModelRouter, Graph-RAG initialization."""
 
 import os
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 import structlog
 
 from src.ai.inference.router import SmartModelRouter
 from src.ai.inference._shared import ModelProfile
+from src.memory.graph_engine import DependencyGraphEngine
 
 logger = structlog.get_logger(__name__)
 
@@ -88,6 +90,16 @@ def init_supermemory(executor) -> None:
         logger.warning("RAGEngine init failed (non-fatal)", error=str(e))
         executor._rag_engine = None
 
+    # v11.7: Graph-RAG dependency engine
+    try:
+        executor._graph_engine = DependencyGraphEngine(root_dir=executor._framework_root)
+        executor._graph_engine.build()
+        stats = executor._graph_engine.stats()
+        logger.info("Graph-RAG engine initialized", files=stats.total_files, edges=stats.total_edges)
+    except Exception as e:
+        logger.warning("Graph-RAG init failed (non-fatal)", error=str(e))
+        executor._graph_engine = None
+
 
 async def recall_memory_context(executor, prompt: str) -> str:
     """Auto memory recall at pipeline start.
@@ -120,6 +132,18 @@ async def recall_memory_context(executor, prompt: str) -> str:
                 fragments.append(f"[MCP Memory] {mcp_result[:600]}")
         except Exception as e:
             logger.debug("MCP memory_search failed", error=str(e))
+
+    # v11.7: Graph-RAG — enrich context with dependency info for mentioned files
+    if getattr(executor, "_graph_engine", None):
+        try:
+            # Extract file paths from the prompt
+            file_refs = re.findall(r'[\w/\\]+\.(?:py|ts|rs|js)', prompt)
+            for fref in file_refs[:3]:  # limit to 3 files
+                graph_ctx = executor._graph_engine.get_context_for_rag(fref, depth=2)
+                if graph_ctx:
+                    fragments.append(f"[Graph-RAG/{fref}] {graph_ctx[:400]}")
+        except Exception as e:
+            logger.debug("Graph-RAG context failed", error=str(e))
 
     if not fragments:
         return ""
