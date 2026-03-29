@@ -191,14 +191,8 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
             parse_mode="Markdown",
         )
 
-    # 1. Intent Classification
-    if not is_reply:
-        brigade = await classify_intent(gateway, prompt)
-
     # -------------------------------------------------------------------
-    # v15.1: Bare URL auto-execution — inject action directive BEFORE
-    # intent routing so the enriched prompt flows through the full pipeline.
-    # Must happen after intent classification (brigade already selected).
+    # v15.1: Bare URL auto-execution — inject action directive for bare URLs.
     # -------------------------------------------------------------------
     prompt = _enrich_bare_url(prompt)
 
@@ -208,6 +202,7 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
     # (they already carry context from the original prompt).
     # -------------------------------------------------------------------
     user_id = message.from_user.id
+    history_prefix = ""
     if not is_reply:
         history = _get_chat_history(gateway, user_id)
         history_prefix = _build_history_prefix(history)
@@ -219,6 +214,142 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
                 turns=len(history),
                 prefix_len=len(history_prefix),
             )
+
+    # -------------------------------------------------------------------
+    # v15.4: Pipeline Inversion — early semantic decomposition BEFORE
+    # intent classification.  Avoids the Router Bottleneck where a
+    # multi-task prompt gets routed to a single brigade by the intent router.
+    # Each sub-task is individually routed via keyword heuristic and
+    # executed concurrently through its own brigade pipeline.
+    # -------------------------------------------------------------------
+    if not is_reply:
+        from src.pipeline._core import _decompose_multi_task
+        _sub_tasks = _decompose_multi_task(prompt)
+        if len(_sub_tasks) >= 2:
+            logger.info(
+                "v15.4 early decomposition activated",
+                n_tasks=len(_sub_tasks),
+                brigades=[b for _, b in _sub_tasks],
+            )
+            _brigades_set = sorted(set(b for _, b in _sub_tasks))
+            _b_label = ", ".join(_brigades_set)
+            _b_esc = gateway.archivist.escape_markdown(_b_label)
+            status_msg = await message.reply(
+                f"🧩 *Decomposer* \\({_b_esc}\\)\\: {len(_sub_tasks)} подзадач\\.\\.\\.",
+                parse_mode="MarkdownV2",
+            )
+            typing_stop = asyncio.Event()
+
+            async def _keep_typing_mt():
+                while not typing_stop.is_set():
+                    try:
+                        await message.bot.send_chat_action(
+                            chat_id=message.chat.id, action="typing",
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await asyncio.wait_for(typing_stop.wait(), timeout=4)
+                        break
+                    except asyncio.TimeoutError:
+                        pass
+
+            typing_task = asyncio.create_task(_keep_typing_mt())
+            _pipeline_start = time.time()
+            try:
+                async def _run_sub(idx: int, text: str, brigade: str):
+                    enriched = history_prefix + text if history_prefix else text
+                    return await gateway.pipeline.execute_stream(
+                        prompt=enriched, brigade=brigade, task_type=None,
+                    )
+
+                _tasks = [
+                    _run_sub(i, t, b) for i, (t, b) in enumerate(_sub_tasks)
+                ]
+                _results = await asyncio.gather(*_tasks, return_exceptions=True)
+            finally:
+                typing_stop.set()
+                typing_task.cancel()
+
+            # Merge sub-task results
+            merged_parts: list[str] = []
+            all_steps: list[dict] = []
+            all_chains: list[str] = []
+            for i, (text, brigade) in enumerate(_sub_tasks):
+                res = _results[i]
+                if isinstance(res, Exception):
+                    merged_parts.append(
+                        f"**Задача {i + 1}** ({brigade}): ⚠️ Ошибка: {res}"
+                    )
+                else:
+                    resp = res.get("final_response", "")
+                    merged_parts.append(
+                        f"**Задача {i + 1}** ({brigade}):\n{resp}"
+                    )
+                    all_steps.extend(res.get("steps", []))
+                    all_chains.extend(res.get("chain_executed", []))
+
+            llm_response = "\n\n---\n\n".join(merged_parts)
+            llm_response = re.sub(
+                r"<think>[\s\S]*?</think>\s*", "", llm_response
+            ).strip()
+
+            chain_str = " → ".join(all_chains) if all_chains else "Decomposer"
+            display_brigade = f"Multi-Task ({_b_label})"
+            actual_brigade = _brigades_set[0]  # for archivist log
+            _pipeline_elapsed = time.time() - _pipeline_start
+
+            hall_result = gateway.hallucination_detector.detect(llm_response, prompt)
+            if hall_result.overall_risk == "high":
+                llm_response += (
+                    "\n\n⚠️ _Внимание: обнаружен высокий риск галлюцинации. "
+                    "Проверьте факты._"
+                )
+
+            # Record chat history
+            _original_user_msg = message.text or ""
+            _hist = _get_chat_history(gateway, message.from_user.id)
+            _hist.append((_original_user_msg, llm_response[:_MAX_TURN_CHARS]))
+
+            # Pipeline history
+            gateway._pipeline_history.append({
+                "timestamp": time.strftime("%H:%M:%S"),
+                "brigade": display_brigade,
+                "prompt": prompt[:80],
+                "chain": chain_str,
+                "duration_sec": _pipeline_elapsed,
+                "status": "completed",
+                "hallucination_risk": hall_result.overall_risk,
+            })
+            if len(gateway._pipeline_history) > 50:
+                gateway._pipeline_history = gateway._pipeline_history[-50:]
+
+            result = {
+                "final_response": llm_response,
+                "chain_executed": all_chains,
+                "steps": all_steps,
+                "status": "completed",
+            }
+            _dur = f"{_pipeline_elapsed:.1f}s"
+            _steps_count = len(all_steps)
+            _total_tok = sum(
+                len(s.get("response", "")) // 4 for s in all_steps
+            )
+            meta_footer = (
+                f"\n\n<tg-spoiler>📊 {display_brigade} | {chain_str} | "
+                f"⏱ {_dur} | 🔗 {_steps_count} steps | "
+                f"~{_total_tok} tok | hall: {hall_result.overall_risk}</tg-spoiler>"
+            )
+            await _send_response(
+                gateway, message, status_msg, result, llm_response,
+                chain_str, display_brigade, actual_brigade, prompt,
+                meta_footer,
+            )
+            return
+
+    # 1. Intent Classification (single-task path — decomposition did not fire)
+    if not is_reply:
+        brigade = await classify_intent(gateway, prompt)
 
     # 2. Execute Pipeline (Chain-of-Agents) or Fast Path
     is_fast_path = (brigade == "General")

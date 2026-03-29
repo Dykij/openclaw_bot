@@ -511,8 +511,15 @@ class PipelineExecutor:
         reset_circuit_breakers()
 
         # --- v13.1: LATS tree search for complex tasks (TaskGroup + early exit) ---
+        # v15.4: Skip LATS entirely when prompt contains a URL — force tool-execution chain
         complexity = classify_complexity(prompt)
-        if complexity in ("complex", "extreme") and not task_type and brigade in ("Dmarket", "Dmarket-Dev"):
+        _has_url = bool(re.search(r"https?://", prompt))
+        if (
+            complexity in ("complex", "extreme")
+            and not task_type
+            and brigade in ("Dmarket", "Dmarket-Dev")
+            and not _has_url
+        ):
             logger.info("LATS activated", complexity=complexity)
             if status_callback:
                 await status_callback("LATS", "tree-search", "🌳 LATS: задача сложная — запускаю дерево поиска решений...")
@@ -528,6 +535,19 @@ class PipelineExecutor:
                                 score=lats_result.best_score, early_exit=lats_result.early_exit)
                     # v15.3: Wrap LATS reasoning trace in <think> so it's hidden from user
                     _lats_answer = lats_result.best_answer
+                    # v15.4: Leakage containment — if the best answer itself
+                    # contains planning preamble, wrap the entire preamble in
+                    # <think> so prompt_handler strips it before the user sees it.
+                    _PLANNING_RE = re.compile(
+                        r"^((?:.*?(?:Approach\s*#\d|Plan\s*:|Подход\s*#?\d|План\s*:).*?\n)+)",
+                        re.IGNORECASE | re.DOTALL,
+                    )
+                    _plan_m = _PLANNING_RE.match(_lats_answer)
+                    if _plan_m:
+                        _lats_answer = (
+                            f"<think>\n{_plan_m.group(1).strip()}\n</think>\n\n"
+                            + _lats_answer[_plan_m.end():]
+                        )
                     _lats_trace = "\n".join(
                         f"[D{n.depth}] {n.thought[:120]}"
                         for n in lats_result.tree_trace
