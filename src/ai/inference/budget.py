@@ -30,6 +30,10 @@ class AdaptiveTokenBudget:
         )
 
     def estimate_budget(self, prompt: str, task_type: str = "general") -> TokenBudget:
+        # B5-fix: автодетект task_type из промпта когда передан "general"
+        if task_type == "general":
+            task_type = self._infer_task_type(prompt)
+
         base = _TASK_BUDGET_DEFAULTS.get(task_type, self._default_max)
 
         prompt_tokens = self._rough_token_count(prompt)
