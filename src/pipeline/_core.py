@@ -426,12 +426,14 @@ class PipelineExecutor:
                     sub_tasks, prompt, max_steps, status_callback,
                 )
 
+        # П7-fix: инициализируем _traj_context безусловно, чтобы избежать
+        # UnboundLocalError на строке ниже при task_type != None
+        _traj_context = ""
         if task_type:
             chain = [task_type]
             chain_source = "task_type"
         else:
             # v14.0: Complementary RL — few-shot trajectories для AFlow
-            _traj_context = ""
             if self._supermemory and classify_complexity(prompt) in ("complex", "extreme"):
                 try:
                     _traj_context = self._supermemory.recall_similar_trajectories(prompt, top_k=3)
@@ -492,6 +494,8 @@ class PipelineExecutor:
         memory_context = await self._recall_memory_context(prompt)
 
         # v14.2: YouTube — если в промпте есть YouTube URL, извлекаем транскрипт
+        _yt_metadata_only = False  # флаг: субтитры недоступны, но есть метаданные
+        _yt_transcript_injected = False  # флаг: полный транскрипт успешно инжектирован
         try:
             from src.tools.youtube_parser import is_youtube_url, analyze_youtube_video
             if is_youtube_url(prompt):
@@ -502,7 +506,24 @@ class PipelineExecutor:
                 if yt_result.success:
                     _yt_ctx = yt_result.to_context()
                     memory_context = (_yt_ctx + "\n\n" + memory_context) if memory_context else _yt_ctx
+                    _yt_transcript_injected = True
                     logger.info("YouTube transcript injected", video_id=yt_result.video_id, chars=len(yt_result.transcript))
+                    # П6-fix: пересчитать budget с учётом реального контекста после YouTube inject
+                    effective_prompt = prompt + "\n" + _yt_ctx
+                    budget = self.token_budget.estimate_budget(effective_prompt, "research")
+                    logger.info("Token budget re-estimated after YouTube inject",
+                                max_tokens=budget.max_tokens, chars=len(_yt_ctx))
+                elif yt_result.title:
+                    # П1/П2-fix: субтитры недоступны, но видео существует — сообщаем явно
+                    _yt_metadata_only = True
+                    _meta_ctx = yt_result.to_context()  # содержит "(Субтитры недоступны)"
+                    memory_context = (_meta_ctx + "\n\n" + memory_context) if memory_context else _meta_ctx
+                    logger.warning("YouTube subtitles unavailable, metadata only",
+                                   video_id=yt_result.video_id, title=yt_result.title)
+                    if status_callback:
+                        await status_callback("System", "youtube",
+                            f"⚠️ Субтитры недоступны для видео «{yt_result.title}». "
+                            "Анализ по метаданным.")
                 else:
                     logger.warning("YouTube fetch failed", error=yt_result.error)
         except Exception as _yt_err:
@@ -569,6 +590,19 @@ class PipelineExecutor:
                 system_prompt = self._mac.enrich_system_prompt(system_prompt)
             except Exception as _mac_err:
                 logger.debug("MAC enrichment failed (non-fatal)", error=str(_mac_err))
+
+            # П4-fix v14.8: антигаллюцинационная директива когда есть YouTube транскрипт
+            if _yt_transcript_injected and role_name in ("Researcher", "Analyst", "Summarizer"):
+                system_prompt += (
+                    "\n\n[YOUTUBE GROUNDING RULE — ОБЯЗАТЕЛЬНО]\n"
+                    "В контексте предоставлен реальный транскрипт YouTube видео.\n"
+                    "ПРАВИЛА:\n"
+                    "1. Анализируй ТОЛЬКО на основе текста транскрипта из контекста.\n"
+                    "2. Запрещено использовать знания из обучающих данных об этом видео, канале или авторе.\n"
+                    "3. Если информация отсутствует в транскрипте — скажи явно: «В транскрипте это не упоминается».\n"
+                    "4. Не придумывай и не предполагай содержимое видео beyond транскрипта."
+                )
+                logger.debug("YouTube grounding directive injected into system_prompt", role=role_name)
 
             if step_index == 0:
                 step_prompt = prompt
@@ -662,34 +696,45 @@ class PipelineExecutor:
                 try:
                     _parsed_calls = parse_tool_calls(response)
                     if _parsed_calls:
-                        logger.info(
-                            "Tool leakage intercepted",
-                            role=role_name, n_calls=len(_parsed_calls),
-                            tools=[c.name for c in _parsed_calls],
-                        )
-                        if status_callback:
-                            await status_callback(
-                                role_name, display_model,
-                                f"🔧 Перехвачен вызов инструмента: {_parsed_calls[0].name}. Выполняю...",
+                        if role_name in TOOL_ELIGIBLE_ROLES:
+                            # П5-fix: исполняем инструменты только у eligible ролей.
+                            # Summarizer/Analyst/Researcher не должны вызывать инструменты.
+                            logger.info(
+                                "Tool leakage intercepted",
+                                role=role_name, n_calls=len(_parsed_calls),
+                                tools=[c.name for c in _parsed_calls],
                             )
-                        _tc_results = await execute_parsed_tool_calls(
-                            _parsed_calls, active_mcp, self._sandbox,
-                        )
-                        _observation = format_observations(_tc_results)
-                        # Strip raw tool-call XML from response so user never sees it
-                        response = strip_tool_calls(response, _parsed_calls)
-                        # Re-query the model with Observation context for a clean answer
-                        _tc_followup = (
-                            f"{step_prompt}\n\n"
-                            f"[TOOL RESULTS]\n{_observation}\n\n"
-                            "Используй результаты инструментов выше для финального ответа. "
-                            "Не выводи XML-теги tool_call."
-                        )
-                        response = await self._call_vllm(
-                            model, system_prompt, _tc_followup, role_name,
-                            role_config, active_mcp,
-                            preserve_think=preserve_think, json_schema=role_schema,
-                        )
+                            if status_callback:
+                                await status_callback(
+                                    role_name, display_model,
+                                    f"🔧 Перехвачен вызов инструмента: {_parsed_calls[0].name}. Выполняю...",
+                                )
+                            _tc_results = await execute_parsed_tool_calls(
+                                _parsed_calls, active_mcp, self._sandbox,
+                            )
+                            _observation = format_observations(_tc_results)
+                            # Strip raw tool-call XML from response so user never sees it
+                            response = strip_tool_calls(response, _parsed_calls)
+                            # Re-query the model with Observation context for a clean answer
+                            _tc_followup = (
+                                f"{step_prompt}\n\n"
+                                f"[TOOL RESULTS]\n{_observation}\n\n"
+                                "Используй результаты инструментов выше для финального ответа. "
+                                "Не выводи XML-теги tool_call."
+                            )
+                            response = await self._call_vllm(
+                                model, system_prompt, _tc_followup, role_name,
+                                role_config, active_mcp,
+                                preserve_think=preserve_think, json_schema=role_schema,
+                            )
+                        else:
+                            # Роль не должна вызывать инструменты — просто стрипаем теги
+                            logger.warning(
+                                "Tool leakage stripped (non-eligible role)",
+                                role=role_name, n_calls=len(_parsed_calls),
+                                tools=[c.name for c in _parsed_calls],
+                            )
+                            response = strip_tool_calls(response, _parsed_calls)
                 except Exception as _tc_err:
                     logger.debug("Tool call interception failed (non-fatal)", error=str(_tc_err))
 

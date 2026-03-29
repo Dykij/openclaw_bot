@@ -144,9 +144,13 @@ async def analyze_youtube_video(
         result.language = prefer_lang
         result.success = True
     else:
-        result.success = bool(result.title)
-        if not result.transcript:
-            logger.info("No subtitles available", video_id=video_id)
+        # П3-fix: success=True ТОЛЬКО если есть реальный транскрипт.
+        # Метаданные (title) без текста — это не успешный анализ.
+        result.success = False
+        if result.title:
+            logger.info("Subtitles unavailable, metadata-only", video_id=video_id)
+        else:
+            logger.info("No subtitles and no metadata", video_id=video_id)
 
     return result
 
