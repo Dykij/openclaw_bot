@@ -58,8 +58,10 @@ _ORCHESTRATOR_ROLES = frozenset(["Planner", "Foreman", "Researcher"])
 
 _HEURISTIC_CHAINS: List[tuple[re.Pattern, List[str]]] = [
     # Pure code generation / refactor
+    # B6-fix: добавлены Executor_Architect и Executor_Tools как альтернативы для Coder
+    # (Coder есть только в Dmarket-Dev; OpenClaw-Core использует Executor_*)
     (re.compile(r"\b(напиши|реализуй|implement|create\s+function|refactor|рефактор|fix\s+bug|исправь)\b", re.I),
-     ["Planner", "Coder", "Auditor"]),
+     ["Planner", "Coder", "Executor_Architect", "Auditor"]),
     # Trading / market analysis
     (re.compile(r"\b(trade|buy|sell|price|market|dmarket|арбитраж|hft|listing)\b", re.I),
      ["Planner", "Executor_Tools", "Auditor"]),
