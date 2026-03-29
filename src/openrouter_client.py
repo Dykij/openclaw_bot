@@ -218,7 +218,8 @@ async def call_openrouter(
                                         raw = data2.get("choices", [{}])[0].get("message", {}).get("content") or ""
                                         text = raw.strip()
                                         if not preserve_think:
-                                            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                                            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+                                            text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
                                         if not text:
                                             raise ValueError("Empty content after tool call")
                                         if model_idx > 0:
@@ -229,7 +230,8 @@ async def call_openrouter(
 
                             text = (msg.get("content") or "").strip()
                             if not preserve_think:
-                                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+                                text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
                             if not text:
                                 raise ValueError("OpenRouter returned empty content")
                             if model_idx > 0:
