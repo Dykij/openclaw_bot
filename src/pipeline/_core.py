@@ -626,6 +626,26 @@ class PipelineExecutor:
         elif _traj_context:
             memory_context = _traj_context
 
+        # v16.1: Deep Source Injection (NotebookLM simulation)
+        if complexity == "extreme":
+            try:
+                from src.memory_mcp import export_vault_content
+                _mega_source = export_vault_content()
+                if _mega_source and "No markdown files" not in _mega_source:
+                    memory_context = (_mega_source + "\n\n" + memory_context) if memory_context else _mega_source
+                    logger.info("NotebookLM Deep Source Injection applied (Complexity: extreme)")
+            except Exception as _deep_err:
+                logger.debug("Deep Source Injection failed", error=str(_deep_err))
+
+        # v16.1: Semantic Cross-Linking (GraphRAG approximation)
+        try:
+            from src.pipeline._logic_provider import get_neural_connection
+            _neural_cx = get_neural_connection(prompt)
+            if _neural_cx:
+                memory_context = (_neural_cx + "\n\n" + memory_context) if memory_context else _neural_cx
+        except Exception as _ns_err:
+            logger.debug("Neural Synthesis failed", error=str(_ns_err))
+
         chain_groups = group_chain(chain)
         steps_results = []
         context_briefing = memory_context
@@ -690,6 +710,15 @@ class PipelineExecutor:
                     system_prompt += _obsidian_logic
             except Exception as _obs_err:
                 logger.debug("Obsidian logic provider failed (non-fatal)", error=str(_obs_err))
+
+            # v16.1: Recursive Self-Reflection (Learning Log Check)
+            try:
+                from src.pipeline._logic_provider import check_learning_log
+                _reflection = check_learning_log(prompt)
+                if _reflection:
+                    system_prompt += _reflection
+            except Exception as _refl_err:
+                logger.debug("Recursive self-reflection failed", error=str(_refl_err))
 
             # П4-fix v14.8 → усилено в v14.9: антигаллюцинационная директива для YouTube
             if _yt_transcript_injected and role_name in ("Researcher", "Analyst", "Summarizer"):
@@ -1132,15 +1161,16 @@ class PipelineExecutor:
             except Exception as _cc_err:
                 logger.debug("Counterfactual credit save failed (non-fatal)", error=str(_cc_err))
 
-        # v16.0: Log to Obsidian Learning_Log.md
+        # v16.0 & v16.1: Learning Log and Dynamic Auto-Tagging
         try:
-            from src.pipeline._logic_provider import record_learning
+            from src.pipeline._logic_provider import record_learning, auto_tag_snippet
             if final_response and not final_response.startswith("⚠️"):
                 record_learning(prompt, "", final_response)
+                auto_tag_snippet(prompt, final_response)
             else:
                 record_learning(prompt, final_response, "Execution failed or produced warnings")
         except Exception as _ll_err:
-            logger.debug("Obsidian LearningLog write failed", error=str(_ll_err))
+            logger.debug("Obsidian LearningLog / AutoTag write failed", error=str(_ll_err))
 
         logger.info(f"Pipeline COMPLETE: brigade={brigade}, steps={len(steps_results)}")
 
