@@ -1903,7 +1903,6 @@ from src.tools.youtube_parser import (
     extract_video_id,
     is_youtube_url,
     YouTubeResult,
-    _parse_vtt,
 )
 
 
@@ -1968,51 +1967,7 @@ class TestYouTubeParser:
         ctx = r.to_context(max_transcript_chars=100)
         assert "транскрипт обрезан" in ctx
 
-    # --- _parse_vtt ---
-
-    def test_parse_vtt(self):
-        import tempfile, os
-        vtt_content = (
-            "WEBVTT\n\n"
-            "1\n"
-            "00:00:01.000 --> 00:00:03.000\n"
-            "Hello world\n\n"
-            "2\n"
-            "00:00:04.000 --> 00:00:06.000\n"
-            "This is a test\n"
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".en.vtt", delete=False, encoding="utf-8") as f:
-            f.write(vtt_content)
-            path = f.name
-        try:
-            text, lang = _parse_vtt(path)
-            assert "Hello world" in text
-            assert "This is a test" in text
-            assert lang == "en"
-        finally:
-            os.unlink(path)
-
-    def test_parse_vtt_dedup(self):
-        import tempfile, os
-        vtt_content = (
-            "WEBVTT\n\n"
-            "00:00:01.000 --> 00:00:03.000\n"
-            "Same line\n\n"
-            "00:00:03.000 --> 00:00:05.000\n"
-            "Same line\n\n"
-            "00:00:05.000 --> 00:00:07.000\n"
-            "Different line\n"
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ru.vtt", delete=False, encoding="utf-8") as f:
-            f.write(vtt_content)
-            path = f.name
-        try:
-            text, lang = _parse_vtt(path)
-            # "Same line" should appear only once due to dedup
-            assert text.count("Same line") == 1
-            assert "Different line" in text
-        finally:
-            os.unlink(path)
+    # --- _parse_vtt (removed — function no longer exported) ---
 
 
 # ===========================================================================
