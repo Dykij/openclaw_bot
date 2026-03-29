@@ -32,8 +32,7 @@ agents/
 │   └── seo-specialist.md
 ├── product/
 │   ├── product-manager.md
-│   ├── product-strategist.md
-│   └── trading-analyst.md
+│   └── product-strategist.md
 ├── project-management/
 │   └── project-manager.md
 ├── support/
