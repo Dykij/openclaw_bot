@@ -359,6 +359,42 @@
       "tags": ["declarations", "type_system", "typescript58", "TYPESCRIPT_MODERN_58"],
       "created_at": 1753660800.0,
       "use_count": 0
+    },
+    {
+      "pattern_id": "tool_call_youtube_url",
+      "description": "TOOL_CALL_ALIGNMENT: When the user message contains a YouTube URL, immediately call youtube_parser. NEVER say 'I cannot browse' — the tool exists and must be called.",
+      "language": "tool_use",
+      "code_snippet": "# User: Summarize this video: https://www.youtube.com/watch?v=XXXXX\n# CORRECT agent behaviour:\nThought: The prompt contains a YouTube URL. I must call youtube_parser immediately.\nAction: youtube_parser\nAction Input: {\"url\": \"https://www.youtube.com/watch?v=XXXXX\"}\n# WRONG (anti-pattern — FORBIDDEN):\n# 'As a language model I cannot access YouTube links...'",
+      "source_file": "knowledge_store/tool_call_alignment",
+      "commit_hash": "v14.6-ANTI-LAZINESS",
+      "score": 0.98,
+      "tags": ["tool_use", "youtube", "zero_shot", "TOOL_CALL_ALIGNMENT"],
+      "created_at": 1753920000.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "tool_call_web_search",
+      "description": "TOOL_CALL_ALIGNMENT: When the user asks to search the web or provides an http/https URL (non-YouTube), immediately call web_search_mcp or fetch_url. Do not describe intentions — execute.",
+      "language": "tool_use",
+      "code_snippet": "# User: Find information at https://example.com/api-docs\n# CORRECT agent behaviour:\nThought: There is an http URL in the prompt. I must fetch it immediately.\nAction: web_search_mcp\nAction Input: {\"query\": \"https://example.com/api-docs\"}\n# OR for direct fetch:\nAction: fetch_url\nAction Input: {\"url\": \"https://example.com/api-docs\"}\n# WRONG (FORBIDDEN): 'I cannot access external URLs as a language model...'",
+      "source_file": "knowledge_store/tool_call_alignment",
+      "commit_hash": "v14.6-ANTI-LAZINESS",
+      "score": 0.97,
+      "tags": ["tool_use", "web_search", "zero_shot", "TOOL_CALL_ALIGNMENT"],
+      "created_at": 1753920000.0,
+      "use_count": 0
+    },
+    {
+      "pattern_id": "tool_call_code_execution",
+      "description": "TOOL_CALL_ALIGNMENT: When the user asks to run, execute, or test code, immediately call sandbox_execute. Do not only show code — execute it and return the real stdout/stderr.",
+      "language": "tool_use",
+      "code_snippet": "# User: Run this Python script and show the output: <code>\n# CORRECT agent behaviour:\nThought: User wants code executed. I must call sandbox_execute.\nAction: sandbox_execute\nAction Input: {\"code\": \"<the code>\", \"language\": \"python\", \"timeout\": 30}\n# Then observe exit_code, stdout, stderr and report to user.\n# WRONG (FORBIDDEN): 'Here is what the code would output...' (without actually running it)",
+      "source_file": "knowledge_store/tool_call_alignment",
+      "commit_hash": "v14.6-ANTI-LAZINESS",
+      "score": 0.97,
+      "tags": ["tool_use", "sandbox", "code_execution", "zero_shot", "TOOL_CALL_ALIGNMENT"],
+      "created_at": 1753920000.0,
+      "use_count": 0
     }
   ]
 }

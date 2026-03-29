@@ -63,13 +63,22 @@ _HEURISTIC_CHAINS: List[tuple[re.Pattern, List[str]]] = [
     # Trading / market analysis
     (re.compile(r"\b(trade|buy|sell|price|market|dmarket|арбитраж|hft|listing)\b", re.I),
      ["Planner", "Executor_Tools", "Auditor"]),
-    # Research / web
+    # YouTube — must appear BEFORE generic URL pattern; Researcher must be first (has youtube_parser)
+    (re.compile(r"youtube\.com|youtu\.be", re.I),
+     ["Researcher", "Analyst", "Summarizer"]),
+    # Research / web (generic)
     (re.compile(r"\b(найди|research|поищи|browse|fetch|url|http|deep\s+research)\b", re.I),
      ["Researcher", "Analyst", "Summarizer"]),
     # Config / system
     (re.compile(r"\b(config|конфиг|настрой|configure|deploy|pipeline|brigade)\b", re.I),
      ["Planner", "Executor_Tools", "State_Manager"]),
 ]
+
+# Regex for detecting any URL in a prompt — used for pre-flight chain validation
+_URL_PATTERN = re.compile(r"https?://", re.I)
+
+# Roles considered tool-capable for URL/fetch tasks
+_TOOL_CAPABLE_ROLES = frozenset(["Researcher", "Executor_Tools"])
 
 
 @dataclass
@@ -132,6 +141,9 @@ class AFlowEngine:
         # Stage 1: Heuristic fast-path
         heuristic = self._match_heuristic(prompt, available_roles)
         if heuristic:
+            # URL pre-flight: if prompt contains a URL, guarantee a tool-capable role is first
+            if _URL_PATTERN.search(prompt):
+                heuristic = self._ensure_tool_capable_first(heuristic, available_roles)
             logger.info("AFlow: heuristic chain selected", chain=heuristic, brigade=brigade)
             return AFlowResult(
                 chain=heuristic,
@@ -180,6 +192,36 @@ class AFlowEngine:
                 if filtered:
                     return filtered
         return None
+
+    def _ensure_tool_capable_first(self, chain: List[str], available_roles: List[str]) -> List[str]:
+        """If the chain doesn't start with a tool-capable role, prepend one.
+
+        This is the v14.6 anti-laziness guarantee: any prompt that contains a URL
+        MUST be routed to a role that has tool access (Researcher or Executor_Tools)
+        as the FIRST handler — never to a pure-text role like Summarizer or Analyst.
+        Inspired by MetaGPT BY_ORDER mode: remove optionality, enforce execution path.
+        """
+        if chain and chain[0] in _TOOL_CAPABLE_ROLES:
+            return chain
+        # Find the first tool-capable role available and prepend it
+        for role in ("Researcher", "Executor_Tools"):
+            if role in available_roles and role not in chain:
+                logger.info(
+                    "AFlow URL pre-flight: prepending tool-capable role",
+                    prepended=role,
+                    original_chain=chain,
+                )
+                return [role] + chain
+        # If already in chain but not first, move it to front
+        for role in ("Researcher", "Executor_Tools"):
+            if role in chain:
+                reordered = [role] + [r for r in chain if r != role]
+                logger.info(
+                    "AFlow URL pre-flight: reordered chain to put tool role first",
+                    reordered=reordered,
+                )
+                return reordered
+        return chain
 
     # ------------------------------------------------------------------
     # Stage 2: LLM-based chain generation

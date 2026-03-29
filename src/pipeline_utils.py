@@ -380,6 +380,22 @@ _AUDITOR_PROTOCOL = (
 )
 
 
+# v14.6: Anti-Refusal + Zero-Shot Tool Execution — injected into ALL roles
+# Insight: MetaGPT BY_ORDER mode eliminates laziness by removing LLM optionality;
+# OpenHands CodeAct queues pending_actions and pops them without giving LLM a "refuse" path.
+# We replicate this determinism via system-prompt directive for all roles.
+_ANTI_REFUSAL_PROTOCOL = (
+    "\n\n[CRITICAL DIRECTIVE: ZERO-SHOT TOOL EXECUTION — v14.6]"
+    "\nЕсли в промпте есть URL (http/https/youtube.com/youtu.be) — НЕМЕДЛЕННО вызови инструмент."
+    "\nНЕ пиши 'Я не могу перейти по ссылке' или 'Как языковая модель...'. У тебя ЕСТЬ инструменты. ИСПОЛЬЗУЙ их."
+    "\n- youtube.com / youtu.be → вызови youtube_parser с этим URL"
+    "\n- http/https (не YouTube) → вызови web_search_mcp или fetch_url с этим URL"
+    "\n- Запрос на выполнение кода → вызови sandbox_execute немедленно"
+    "\nАЛГОРИТМ: Thought → Action (выбор инструмента) → Action Input (JSON параметры) → наблюдение результата."
+    "\nОТКАЗ ЗАПРЕЩЁН. Объяснения 'почему не могу' — ЗАПРЕЩЕНЫ. Только действие."
+)
+
+
 def build_role_prompt(role_name: str, role_config: dict, framework_root: str, task_type: str = None) -> str:
     """Build the system prompt for a given pipeline role with protocol injections."""
     if task_type:
@@ -471,6 +487,9 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
 
     # Inject Kill List into ALL roles for persona consistency
     system_prompt += _KILL_LIST
+
+    # v14.6: Inject Anti-Refusal protocol into ALL roles — zero-shot tool execution guarantee
+    system_prompt += _ANTI_REFUSAL_PROTOCOL
 
     # Inject IDENTITY.md persona cues for Archivists (human-readable output) and Planners
     if is_archivist or is_planner:
