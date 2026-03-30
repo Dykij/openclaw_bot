@@ -102,7 +102,7 @@ class DeepResearchPipeline:
         mcp_client,
         openrouter_config: Optional[Dict[str, Any]] = None,
         openrouter_model: str = "",
-        vllm_url: str = "",
+        
     ):
         self.model = model
         self.mcp_client = mcp_client

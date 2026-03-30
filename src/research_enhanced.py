@@ -104,11 +104,9 @@ async def _llm_call(
     max_tokens: int = 2048,
     temperature: float = 0.2,
     retries: int = 2,
-    vllm_url: str = "",
+    
 ) -> str:
     """Shared LLM inference via cloud gateway with retry-backoff.
-
-    The vllm_url parameter is accepted for backwards compatibility but unused.
     """
     messages = [
         {"role": "system", "content": system},
@@ -151,7 +149,7 @@ class MultiPerspectiveResearcher:
     - Synthesizer: merges perspectives into balanced view
     """
 
-    def __init__(self, model: str, vllm_url: str = "") -> None:
+    def __init__(self, model: str, ) -> None:
         self.model = model
 
     async def research(
@@ -486,7 +484,7 @@ class CrossValidator:
         self,
         model: str,
         mcp_client: Any = None,
-        vllm_url: str = "",
+        
     ) -> None:
         self.model = model
         self.mcp_client = mcp_client

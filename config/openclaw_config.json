@@ -38,10 +38,8 @@
     },
     "tailscale": {
       "enabled": true,
-      "vllm_use_tailscale": false,
-      "vllm_peer_hostname": "",
       "health_interval_sec": 60,
-      "notes": "Tailscale VPN integration. vllm_use_tailscale=true routes vLLM through tailnet IP. vllm_peer_hostname for remote GPU node."
+      "notes": "Tailscale VPN integration for mesh networking."
     },
     "polling_gateway_url": "",
     "polling_interval": 30,
@@ -279,7 +277,7 @@
           "route_to": "Dmarket-Dev"
         },
         {
-          "condition": "IF task_type in ['framework_update', 'memory_optimization', 'tool_creation', 'vllm_config', 'pipeline', 'refactor']",
+          "condition": "IF task_type in ['framework_update', 'memory_optimization', 'tool_creation', 'pipeline', 'refactor']",
           "route_to": "OpenClaw-Core"
         },
         {

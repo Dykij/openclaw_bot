@@ -223,7 +223,7 @@ class PipelineExecutor:
             "Research-Ops": ["Researcher", "Analyst", "Summarizer"],
         }
 
-        self._ctx_budget = self.config.get("system", {}).get("vllm_max_model_len", 16384)
+        self._ctx_budget = self.config.get("system", {}).get("max_model_len", 16384)
 
         # Initialize MCP Clients dynamically
         framework_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -244,7 +244,7 @@ class PipelineExecutor:
         self.metrics_collector = get_metrics_collector() or InferenceMetricsCollector()
         vram_gb = config.get("system", {}).get("hardware", {}).get("vram_gb", 16.0)
         self.token_budget = get_token_budget() or AdaptiveTokenBudget(
-            default_max_tokens=config.get("system", {}).get("vllm_max_model_len", 8192),
+            default_max_tokens=config.get("system", {}).get("max_model_len", 8192),
             vram_gb=vram_gb,
         )
         logger.info("InferenceMetrics + AdaptiveTokenBudget activated (shared)")
@@ -341,22 +341,9 @@ class PipelineExecutor:
 
         self._init_supermemory()
 
-    async def _validate_vllm(self):
-        """Checks that the vLLM server is reachable."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.vllm_url}/models",
-                    timeout=aiohttp.ClientTimeout(total=5),
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        models = [m["id"] for m in data.get("data", [])]
-                        logger.info("vLLM server reachable", models=models)
-                    else:
-                        logger.warning("vLLM server responded with", status=resp.status)
-        except Exception as e:
-            logger.warning("vLLM server not reachable (will start on first request)", error=str(e))
+    async def _validate_cloud(self):
+        """Checks that the cloud LLM gateway is configured."""
+        logger.info("Cloud-only mode: LLM gateway configured via OpenRouter")
 
     def get_chain(self, brigade: str) -> List[str]:
         brigade_config = self.config.get("brigades", {}).get(brigade, {})
@@ -1005,10 +992,8 @@ class PipelineExecutor:
                         {"role": "user", "content": retry_prompt}
                     ]
                     try:
-                        if self.force_cloud:
                             new_response = await call_openrouter(
                                 openrouter_config=self.openrouter_config,
-                                vllm_url=self.vllm_url,
                                 model=model,
                                 fallback_model=role_config.get("fallback_model", model),
                                 system_prompt=system_prompt,
