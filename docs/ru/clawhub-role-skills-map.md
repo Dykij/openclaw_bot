@@ -1,167 +1,182 @@
-# ClawHub Skills → Роли агентов: Полный маппинг
+# ClawHub Skills → Роли агентов: Максимальный маппинг v2
 
-> Документ: анализ всех 20 ролей (15 бригадных + 5 автономных) и назначенные ClawHub-скилы.
+> 38 из 53 ClawHub-скилов назначены. 342 назначения на 20 ролей.
 > Дата: 2026-03-30
 
 ## Обзор
 
-| Бригада | Ролей | Скилов назначено |
-|---------|-------|------------------|
-| Dmarket-Dev | 3 | 16 |
-| OpenClaw-Core | 9 | 49 |
-| Research-Ops | 3 | 15 |
-| Автономные агенты | 5 | 24 |
-| **Итого** | **20** | **104** |
+| Бригада | Ролей | Скилов назначено | Δ от v1 |
+|---------|-------|------------------|---------|
+| Dmarket-Dev | 3 | 55 | +39 |
+| OpenClaw-Core | 9 | 151 | +102 |
+| Research-Ops | 3 | 61 | +46 |
+| Автономные агенты | 5 | 75 | +51 |
+| **Итого** | **20** | **342** | **+238** |
 
 ---
 
 ## 🏭 Бригада: Dmarket-Dev
 
-### Planner (Оркестратор)
+### Planner (Оркестратор) — 24 скила
 **Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
 **Домен:** HFT-трейдинг, Dmarket API, арбитраж CS2 скинов
 
-| Скил | Зачем |
-|------|-------|
-| `github` | Создание задач, PR, контроль репозитория |
-| `gh-issues` | Автоматический трекинг задач и спавн sub-агентов |
-| `trello` | Визуальное управление проектом / Kanban |
-| `session-logs` | Анализ предыдущих сессий для контекста |
-| `summarize` | Суммаризация отчётов для быстрого обзора |
-| `clawhub` | Поиск и установка новых скилов |
+| Категория | Скилы |
+|-----------|-------|
+| Ядро | `clawhub`, `session-logs`, `github`, `summarize`, `gemini`, `oracle` |
+| PM/Задачи | `gh-issues`, `trello`, `notion`, `things-mac`, `obsidian` |
+| Коммуникации | `discord`, `slack`, `himalaya`, `wacli`, `voice-call` |
+| Аналитика | `weather`, `xurl`, `blogwatcher`, `model-usage` |
+| Инструменты | `coding-agent`, `canvas`, `nano-pdf`, `gog` |
 
-### Coder (Разработчик)
+### Coder (Разработчик) — 17 скилов
 **Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
 **Домен:** Python/asyncio, Dmarket API, WebSocket, HMAC
 
-| Скил | Зачем |
-|------|-------|
-| `github` | Коммиты, PR, ревью кода |
-| `coding-agent` | Делегирование сложных задач кодинга |
-| `tmux` | Управление терминальными сессиями |
-| `session-logs` | Контекст из предыдущих сессий |
-| `clawhub` | Установка утилитных скилов по необходимости |
-| `skill-creator` | Создание новых скилов для трейдинга |
+| Категория | Скилы |
+|-----------|-------|
+| Ядро | `clawhub`, `session-logs`, `github`, `summarize`, `gemini`, `oracle` |
+| Разработка | `coding-agent`, `tmux`, `skill-creator`, `template-skill`, `mcporter` |
+| Медиа | `canvas`, `nano-pdf`, `video-frames`, `openai-whisper-api` |
+| Трекинг | `gh-issues`, `model-usage` |
 
-### Auditor (Аудитор безопасности)
+### Auditor (Безопасность) — 14 скилов
 **Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
 **Домен:** Security audit, injection, credentials, risk
 
-| Скил | Зачем |
-|------|-------|
-| `github` | Проверка коммитов на утечки |
-| `healthcheck` | Сканирование системы на уязвимости |
-| `session-logs` | Аудит логов сессий |
-| `1password` | Безопасное управление секретами |
-| `clawhub` | Проверка безопасности скилов |
+| Категория | Скилы |
+|-----------|-------|
+| Ядро | `clawhub`, `session-logs`, `github`, `summarize`, `gemini`, `oracle` |
+| Безопасность | `healthcheck`, `1password`, `mcporter` |
+| Разработка | `coding-agent`, `tmux` |
+| Трекинг | `gh-issues`, `model-usage`, `nano-pdf` |
 
 ---
 
 ## ⚙️ Бригада: OpenClaw-Core
 
-### Planner (Оркестратор)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `gh-issues`, `trello`, `session-logs`, `summarize`, `clawhub`, `notion`
+### Planner — 25 скилов
+`apple-notes`, `blogwatcher`, `canvas`, `clawhub`, `coding-agent`, `discord`, `gemini`, `gh-issues`, `github`, `gog`, `himalaya`, `model-usage`, `nano-pdf`, `notion`, `obsidian`, `oracle`, `session-logs`, `slack`, `summarize`, `things-mac`, `tmux` *(отсутствует — планировщик)*, `trello`, `voice-call`, `wacli`, `weather`, `xurl`
 
-### Foreman (Прораб)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `tmux`, `session-logs`, `healthcheck`, `clawhub`
+### Foreman — 17 скилов
+`clawhub`, `coding-agent`, `discord`, `gemini`, `gh-issues`, `github`, `healthcheck`, `mcporter`, `model-usage`, `notion`, `oracle`, `session-logs`, `skill-creator`, `slack`, `summarize`, `tmux`, `trello`
 
-### Executor_Architect (Архитектор ядра)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `coding-agent`, `tmux`, `session-logs`, `clawhub`
+### Executor_Architect — 15 скилов
+`canvas`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `mcporter`, `model-usage`, `nano-pdf`, `oracle`, `session-logs`, `skill-creator`, `summarize`, `template-skill`, `tmux`
 
-### Executor_Tools (Инженер инструментов)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `coding-agent`, `tmux`, `skill-creator`, `mcporter`, `clawhub`, `session-logs`
+### Executor_Tools — 19 скилов
+`canvas`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `mcporter`, `model-usage`, `nano-banana-pro`, `nano-pdf`, `openai-whisper-api`, `oracle`, `peekaboo`, `session-logs`, `skill-creator`, `summarize`, `template-skill`, `tmux`, `video-frames`
 
-### Executor_Integration (Интегратор)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `mcporter`, `tmux`, `session-logs`, `clawhub`, `healthcheck`
+### Executor_Integration — 18 скилов
+`canvas`, `clawhub`, `coding-agent`, `discord`, `gemini`, `gh-issues`, `github`, `healthcheck`, `mcporter`, `model-usage`, `notion`, `oracle`, `session-logs`, `skill-creator`, `slack`, `summarize`, `tmux`, `voice-call`
 
-### Auditor (Безопасник)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `healthcheck`, `1password`, `session-logs`, `clawhub`
+### Auditor — 14 скилов
+`1password`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `healthcheck`, `mcporter`, `model-usage`, `nano-pdf`, `oracle`, `session-logs`, `summarize`, `tmux`
 
-### Archivist (Архивист)
-**Модель:** `arcee-ai/trinity-mini:free`
-**Скилы:** `github`, `session-logs`, `summarize`, `obsidian`, `clawhub`
+### Archivist — 19 скилов
+`apple-notes`, `bear-notes`, `canvas`, `clawhub`, `discord`, `gemini`, `github`, `gog`, `himalaya`, `nano-pdf`, `notion`, `obsidian`, `oracle`, `session-logs`, `slack`, `summarize`, `things-mac`, `trello`, `wacli`
 
-### State_Manager (Управление состоянием)
-**Модель:** `arcee-ai/trinity-mini:free`
-**Скилы:** `session-logs`, `summarize`, `clawhub`
+### State_Manager — 12 скилов
+`canvas`, `clawhub`, `coding-agent`, `gemini`, `github`, `model-usage`, `nano-pdf`, `notion`, `obsidian`, `oracle`, `session-logs`, `summarize`
 
-### Test_Writer (Тестировщик)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `coding-agent`, `tmux`, `session-logs`, `clawhub`
+### Test_Writer — 12 скилов
+`clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `mcporter`, `model-usage`, `oracle`, `session-logs`, `summarize`, `template-skill`, `tmux`
 
 ---
 
 ## 🔬 Бригада: Research-Ops
 
-### Researcher (Исследователь)
-**Модель:** `arcee-ai/trinity-large-preview:free`
-**Скилы:** `github`, `summarize`, `xurl`, `blogwatcher`, `session-logs`, `clawhub`, `nano-pdf`
+### Researcher — 24 скила
+`blogwatcher`, `camsnap`, `canvas`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `gog`, `goplaces`, `himalaya`, `model-usage`, `nano-banana-pro`, `nano-pdf`, `notion`, `obsidian`, `openai-whisper-api`, `oracle`, `session-logs`, `summarize`, `tmux`, `video-frames`, `weather`, `xurl`
 
-### Analyst (Аналитик)
-**Модель:** `nvidia/nemotron-3-super-120b-a12b:free`
-**Скилы:** `github`, `session-logs`, `summarize`, `clawhub`
+### Analyst — 20 скилов
+`blogwatcher`, `canvas`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `goplaces`, `model-usage`, `nano-pdf`, `notion`, `obsidian`, `openai-whisper-api`, `oracle`, `session-logs`, `summarize`, `tmux`, `video-frames`, `weather`, `xurl`
 
-### Summarizer (Архивист)
-**Модель:** `arcee-ai/trinity-mini:free`
-**Скилы:** `summarize`, `session-logs`, `nano-pdf`, `clawhub`
+### Summarizer — 17 скилов
+`apple-notes`, `bear-notes`, `canvas`, `clawhub`, `discord`, `gemini`, `github`, `gog`, `himalaya`, `nano-pdf`, `notion`, `obsidian`, `oracle`, `session-logs`, `slack`, `summarize`, `wacli`
 
 ---
 
-## 🤖 Автономные агенты (openclaw_agents.json)
+## 🤖 Автономные агенты
 
-### Risk Manager
-**Модель:** `deepseek/deepseek-r1:free`
-**Скилы:** `github`, `session-logs`, `healthcheck`, `clawhub`
+### Risk Manager — 16 скилов
+`1password`, `clawhub`, `coding-agent`, `discord`, `gemini`, `gh-issues`, `github`, `healthcheck`, `mcporter`, `model-usage`, `nano-pdf`, `oracle`, `session-logs`, `slack`, `summarize`, `tmux`
 
-### Latency Monitor
-**Модель:** `qwen/qwen-2.5-coder-32b-instruct:free`
-**Скилы:** `github`, `coding-agent`, `tmux`, `session-logs`, `clawhub`
+### Latency Monitor — 14 скилов
+`canvas`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `healthcheck`, `mcporter`, `model-usage`, `nano-pdf`, `oracle`, `session-logs`, `summarize`, `tmux`
 
-### Security Auditor
-**Модель:** `google/gemma-3-12b-it:free`
-**Скилы:** `github`, `healthcheck`, `1password`, `session-logs`, `clawhub`
+### Security Auditor — 14 скилов
+`1password`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `healthcheck`, `mcporter`, `model-usage`, `nano-pdf`, `oracle`, `session-logs`, `summarize`, `tmux`
 
-### Tool Smith
-**Модель:** `qwen/qwen-2.5-coder-32b-instruct:free`
-**Скилы:** `github`, `coding-agent`, `skill-creator`, `mcporter`, `tmux`, `clawhub`, `session-logs`
+### Tool Smith — 19 скилов
+`canvas`, `clawhub`, `coding-agent`, `gemini`, `gh-issues`, `github`, `mcporter`, `model-usage`, `nano-banana-pro`, `nano-pdf`, `openai-whisper-api`, `oracle`, `peekaboo`, `session-logs`, `skill-creator`, `summarize`, `template-skill`, `tmux`, `video-frames`
 
-### Memory Garbage Collector
-**Модель:** `meta-llama/llama-3.3-70b-instruct:free`
-**Скилы:** `session-logs`, `summarize`, `clawhub`
+### Memory Garbage Collector — 12 скилов
+`canvas`, `clawhub`, `coding-agent`, `gemini`, `github`, `model-usage`, `nano-pdf`, `notion`, `obsidian`, `oracle`, `session-logs`, `summarize`
 
 ---
 
 ## 📊 Статистика использования скилов
 
-| Скил | Ролей использует | Категория |
-|------|------------------|-----------|
+| Скил | Ролей | Категория |
+|------|-------|-----------|
 | `clawhub` | 20 | Маркетплейс |
 | `session-logs` | 20 | Логирование |
-| `github` | 17 | DevOps |
-| `summarize` | 7 | Обработка текста |
-| `coding-agent` | 6 | Разработка |
-| `tmux` | 6 | Терминал |
-| `healthcheck` | 5 | Безопасность |
-| `1password` | 3 | Секреты |
-| `skill-creator` | 3 | Создание скилов |
-| `mcporter` | 3 | MCP инструменты |
-| `gh-issues` | 2 | GitHub Issues |
-| `trello` | 2 | PM/Kanban |
-| `nano-pdf` | 2 | Документы |
-| `obsidian` | 1 | Заметки |
-| `notion` | 1 | PM |
-| `xurl` | 1 | Twitter/X API |
-| `blogwatcher` | 1 | RSS мониторинг |
+| `github` | 20 | DevOps |
+| `summarize` | 20 | Обработка текста |
+| `gemini` | 20 | AI ассистент |
+| `oracle` | 20 | AI ассистент |
+| `model-usage` | 18 | Мониторинг |
+| `coding-agent` | 16 | Разработка |
+| `gh-issues` | 15 | GitHub Issues |
+| `tmux` | 13 | Терминал |
+| `nano-pdf` | 15 | Документы |
+| `canvas` | 13 | Визуализация |
+| `mcporter` | 10 | MCP инструменты |
+| `notion` | 9 | PM |
+| `healthcheck` | 7 | Безопасность |
+| `discord` | 7 | Коммуникации |
+| `slack` | 7 | Коммуникации |
+| `obsidian` | 7 | Заметки |
+| `skill-creator` | 5 | Создание скилов |
+| `1password` | 4 | Секреты |
+| `himalaya` | 4 | Email |
+| `wacli` | 4 | WhatsApp |
+| `trello` | 4 | Kanban |
+| `gog` | 4 | Google Workspace |
+| `weather` | 4 | Погода/корреляции |
+| `xurl` | 4 | Twitter/X |
+| `blogwatcher` | 4 | RSS мониторинг |
+| `template-skill` | 4 | Шаблоны |
+| `things-mac` | 3 | Задачи macOS |
+| `video-frames` | 4 | Видеоанализ |
+| `openai-whisper-api` | 4 | Транскрипция |
+| `voice-call` | 3 | Голосовые звонки |
+| `apple-notes` | 3 | Заметки Apple |
+| `bear-notes` | 2 | Заметки Bear |
+| `goplaces` | 2 | Геолокация |
+| `nano-banana-pro` | 3 | Генерация изображений |
+| `peekaboo` | 2 | macOS автоматизация |
+| `camsnap` | 1 | Камеры |
 
-## Скилы НЕ назначенные ролям (39 из 54)
+## Неиспользуемые скилы (15 из 53)
 
-Следующие скилы доступны, но не нужны текущим ролям:
-`apple-notes`, `apple-reminders`, `bear-notes`, `blucli`, `bluebubbles`, `camsnap`, `canvas`, `discord`, `eightctl`, `gemini`, `gifgrep`, `gog`, `goplaces`, `himalaya`, `imsg`, `model-usage`, `nano-banana-pro`, `openai-image-gen`, `openai-whisper`, `openai-whisper-api`, `openhue`, `oracle`, `ordercli`, `peekaboo`, `sag`, `sherpa-onnx-tts`, `slack`, `songsee`, `sonoscli`, `spotify-player`, `template-skill`, `things-mac`, `video-frames`, `voice-call`, `wacli`, `weather`
+Следующие скилы **не назначены** ни одной роли — они слишком нишевые:
 
-Эти скилы могут быть назначены по запросу (например, `weather` для Research-Ops, `discord`/`slack` для коммуникационных ролей).
+| Скил | Причина |
+|------|---------|
+| `apple-reminders` | macOS-only, дублирует things-mac |
+| `blucli` | BluOS аудио — нишевое |
+| `bluebubbles` | iMessage — дублирует imsg |
+| `eightctl` | Eight Sleep pod — IoT |
+| `gifgrep` | GIF поиск — развлекательное |
+| `imsg` | iMessage — macOS-only |
+| `openai-image-gen` | Дублирует nano-banana-pro |
+| `openai-whisper` | Локальный — дублирует API версию |
+| `openhue` | Philips Hue — IoT |
+| `ordercli` | Foodora заказы — нишевое |
+| `sag` | ElevenLabs TTS — нишевое |
+| `sherpa-onnx-tts` | Локальный TTS — нишевое |
+| `songsee` | Аудио визуализация — нишевое |
+| `sonoscli` | Sonos колонки — IoT |
+| `spotify-player` | Spotify — развлекательное |

@@ -8,10 +8,22 @@
       "Latency Monitor"
     ],
     "skills": [
+      "1password",
+      "clawhub",
+      "coding-agent",
+      "discord",
+      "gemini",
+      "gh-issues",
       "github",
-      "session-logs",
       "healthcheck",
-      "clawhub"
+      "mcporter",
+      "model-usage",
+      "nano-pdf",
+      "oracle",
+      "session-logs",
+      "slack",
+      "summarize",
+      "tmux"
     ]
   },
   {
@@ -23,11 +35,20 @@
       "Security Auditor"
     ],
     "skills": [
-      "github",
+      "canvas",
+      "clawhub",
       "coding-agent",
-      "tmux",
+      "gemini",
+      "gh-issues",
+      "github",
+      "healthcheck",
+      "mcporter",
+      "model-usage",
+      "nano-pdf",
+      "oracle",
       "session-logs",
-      "clawhub"
+      "summarize",
+      "tmux"
     ]
   },
   {
@@ -39,11 +60,20 @@
       "Executor"
     ],
     "skills": [
+      "1password",
+      "clawhub",
+      "coding-agent",
+      "gemini",
+      "gh-issues",
       "github",
       "healthcheck",
-      "1password",
+      "mcporter",
+      "model-usage",
+      "nano-pdf",
+      "oracle",
       "session-logs",
-      "clawhub"
+      "summarize",
+      "tmux"
     ]
   },
   {
@@ -55,13 +85,25 @@
       "Planner"
     ],
     "skills": [
-      "github",
-      "coding-agent",
-      "skill-creator",
-      "mcporter",
-      "tmux",
+      "canvas",
       "clawhub",
-      "session-logs"
+      "coding-agent",
+      "gemini",
+      "gh-issues",
+      "github",
+      "mcporter",
+      "model-usage",
+      "nano-banana-pro",
+      "nano-pdf",
+      "openai-whisper-api",
+      "oracle",
+      "peekaboo",
+      "session-logs",
+      "skill-creator",
+      "summarize",
+      "template-skill",
+      "tmux",
+      "video-frames"
     ]
   },
   {
@@ -73,9 +115,18 @@
       "Tool Smith"
     ],
     "skills": [
+      "canvas",
+      "clawhub",
+      "coding-agent",
+      "gemini",
+      "github",
+      "model-usage",
+      "nano-pdf",
+      "notion",
+      "obsidian",
+      "oracle",
       "session-logs",
-      "summarize",
-      "clawhub"
+      "summarize"
     ]
   }
 ]
