@@ -46,13 +46,7 @@ from src.pipeline_utils import (
     sanitize_file_content,
 )
 from src.code_validator import CodeValidator
-from src.context_bridge import ContextBridge
-from src.vllm_inference import (
-    call_vllm,
-    execute_stream,
-    force_unload,
-    vram_protection,
-)
+from src.llm_gateway import route_llm
 from src.openrouter_client import call_openrouter, reset_circuit_breakers
 from src.ai.agents.react import ReActReasoner
 from src.ai.agents.constitutional import ConstitutionalChecker
@@ -216,21 +210,15 @@ class PipelineExecutor:
     for all inference calls. Model swapping managed by VLLMModelManager.
     """
 
-    def __init__(self, config: Dict[str, Any], vllm_url: str, vllm_manager=None):
+    def __init__(self, config: Dict[str, Any], vllm_url: str = "", vllm_manager=None):
         self.config = config
-        self.vllm_url = vllm_url.rstrip("/")
+        self.vllm_url = vllm_url.rstrip("/") if vllm_url else ""
         self.vllm_manager = vllm_manager
-        self.gc_model = config.get("memory", {}).get("model", "google/gemma-3-12b-it")
 
         # OpenRouter configuration (primary inference)
         self.openrouter_config = config.get("system", {}).get("openrouter", {})
         self.openrouter_enabled = self.openrouter_config.get("enabled", False) and bool(self.openrouter_config.get("api_key", ""))
-        self._use_local_models = self.openrouter_config.get("use_local_models", True)
-        self.force_cloud = (
-            self.openrouter_enabled
-            and self.openrouter_config.get("force_cloud", False)
-            and not self._use_local_models
-        )
+        self.force_cloud = True  # Cloud-only mode (OpenRouter)
 
         self.default_chains = {
             "Dmarket-Dev": ["Planner", "Coder", "Auditor"],
@@ -270,30 +258,24 @@ class PipelineExecutor:
         # SmartModelRouter (delegated to _state.py)
         self._smart_router = init_smart_router(config, self.force_cloud)
 
-        # Context Bridge
-        if self.force_cloud:
-            self.context_bridge = ContextBridge({"context_bridge": {"enabled": False}})
-            logger.info("Context Bridge DISABLED (cloud-only mode, no local model swaps)")
-        else:
-            self.context_bridge = ContextBridge(config.get("system", {}))
+        self.context_bridge = None  # Unused in cloud-only mode
 
-        self._react_reasoner = ReActReasoner(vllm_url=self.vllm_url, model="")
-        self._constitutional = ConstitutionalChecker(vllm_url=self.vllm_url, model="")
+        self._react_reasoner = ReActReasoner(model="")
+        self._constitutional = ConstitutionalChecker(model="")
         self._sandbox = DynamicSandbox()
 
         # v11.7: LATS tree search + MARCH hallucination control
         lats_model = self.config.get("model_router", {}).get(
             "research", "meta-llama/llama-3.3-70b-instruct:free"
         )
-        self._lats_engine = LATSEngine(model=lats_model, vllm_url=self.vllm_url)
-        self._march_protocol = MARCHProtocol(vllm_url=self.vllm_url)
+        self._lats_engine = LATSEngine(model=lats_model)
+        self._march_protocol = MARCHProtocol()
 
         # v13.2: AFlow dynamic chain generator
         aflow_model = self.config.get("system", {}).get("model_router", {}).get(
             "intent", "meta-llama/llama-3.3-70b-instruct:free"
         )
         self._aflow = AFlowEngine(
-            vllm_url=self.vllm_url,
             model=aflow_model,
             default_chains=self.default_chains,
         )
@@ -301,7 +283,6 @@ class PipelineExecutor:
         # v14.0: SAGE self-evolution engine
         sage_cfg = self.config.get("system", {}).get("sage", {})
         self._sage = SAGEEngine(
-            vllm_url=self.vllm_url,
             model=aflow_model,
             enabled=sage_cfg.get("enabled", True),
         )
@@ -309,7 +290,6 @@ class PipelineExecutor:
         # v14.0: MAC Dynamic Constitution
         mac_cfg = self.config.get("system", {}).get("mac", {})
         self._mac = MACConstitution(
-            vllm_url=self.vllm_url,
             model=self.config.get("system", {}).get("model_router", {}).get(
                 "expand", "google/gemma-3-12b-it:free"
             ),
@@ -335,47 +315,18 @@ class PipelineExecutor:
         return await recall_memory_context(self, prompt)
 
     async def _reflexion_fallback(self, prompt: str, error_response: str) -> Optional[str]:
-        return await reflexion_fallback(self.vllm_url, self.config, prompt, error_response)
+        return await reflexion_fallback(self.config, prompt, error_response)
 
     async def _quick_inference(self, prompt: str) -> str:
         """v16.4: Fast LLM inference for autonomous reflection (Self-Healing)."""
         try:
-            if self.force_cloud and self.openrouter_config:
-                response = await call_openrouter(
-                    openrouter_config=self.openrouter_config,
-                    vllm_url=self.vllm_url,
-                    model="meta-llama/llama-3.3-70b-instruct:free",
-                    fallback_model="meta-llama/llama-3.3-70b-instruct:free",
-                    system_prompt="You are a debugging assistant. Be concise. Answer in Russian.",
-                    user_prompt=prompt,
-                    role_name="Reflection",
-                    role_config={"temperature": 0.3, "max_tokens": 512},
-                    mcp_client=None,
-                    config=self.config,
-                )
-            else:
-                async with aiohttp.ClientSession() as sess:
-                    payload = {
-                        "model": "meta-llama/llama-3.3-70b-instruct",
-                        "messages": [
-                            {"role": "system", "content": "You are a debugging assistant. Be concise. Answer in Russian."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        "stream": False,
-                        "max_tokens": 512,
-                        "temperature": 0.3,
-                    }
-                    async with sess.post(
-                        f"{self.vllm_url}/chat/completions",
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            response = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        else:
-                            response = ""
-            return (response or "").strip()
+            return await route_llm(
+                prompt,
+                system="You are a debugging assistant. Be concise. Answer in Russian.",
+                model="meta-llama/llama-3.3-70b-instruct:free",
+                max_tokens=512,
+                temperature=0.3,
+            )
         except Exception as e:
             logger.warning("v16.4 quick inference failed", error=str(e))
             return ""
@@ -394,9 +345,6 @@ class PipelineExecutor:
         logger.info("Pipeline MCP clients initialized (openclaw + dmarket contexts)")
 
         self._init_supermemory()
-
-        if not self.force_cloud:
-            await self._validate_vllm()
 
     async def _validate_vllm(self):
         """Checks that the vLLM server is reachable (or manager is configured)."""
@@ -1097,20 +1045,13 @@ class PipelineExecutor:
                                 config=self.config,
                             )
                         else:
-                            _payload = {
-                                "model": model,
-                                "messages": retry_messages,
-                                "stream": False,
-                                "max_tokens": 2048,
-                            }
-                            async with aiohttp.ClientSession() as _sess:
-                                async with _sess.post(f"{self.vllm_url}/chat/completions", json=_payload, timeout=aiohttp.ClientTimeout(total=60)) as retry_resp:
-                                    if retry_resp.status == 200:
-                                        r_data = await retry_resp.json()
-                                        _raw = r_data.get("choices", [{}])[0].get("message", {}).get("content") or ""
-                                        new_response = _raw.strip()
-                                    else:
-                                        new_response = ""
+                            new_response = await route_llm(
+                                step_prompt + "\n\n" + retry_prompt,
+                                system=system_prompt,
+                                model=model,
+                                messages=retry_messages,
+                                max_tokens=2048,
+                            )
                         new_response = re.sub(r"<think>.*?</think>", "", (new_response or ""), flags=re.DOTALL)
                         new_response = re.sub(r"<think>.*$", "", new_response, flags=re.DOTALL).strip()
                         if new_response:
@@ -1532,18 +1473,12 @@ class PipelineExecutor:
                 json_schema=json_schema,
             )
         else:
-            result = await call_vllm(
-                vllm_url=self.vllm_url,
+            result = await route_llm(
+                user_prompt,
+                system=system_prompt,
                 model=model,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                role_name=role_name,
-                role_config=role_config,
-                mcp_client=mcp_client,
-                config=self.config,
-                vllm_manager=self.vllm_manager,
-                preserve_think=preserve_think,
-                json_schema=json_schema,
+                max_tokens=role_config.get("max_tokens", 2048),
+                temperature=role_config.get("temperature", 0.3),
             )
         elapsed_ms = (time.monotonic() - t0) * 1000
 
@@ -1633,15 +1568,12 @@ class PipelineExecutor:
         }
 
     async def _force_unload(self, model: str):
-        await force_unload(model)
+        pass  # No-op in cloud-only mode
 
     async def execute_stream(self, prompt, brigade="Dmarket", max_steps=5, status_callback=None, task_type=None):
+        from src.vllm_inference import execute_stream
         return await execute_stream(self, prompt, brigade, max_steps, status_callback, task_type)
 
     @asynccontextmanager
     async def _vram_protection(self, target_model: str, prev_model: Optional[str]):
-        if self.force_cloud:
-            yield
-        else:
-            async with vram_protection(target_model, prev_model):
-                yield
+        yield  # No-op in cloud-only mode

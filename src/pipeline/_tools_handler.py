@@ -36,8 +36,6 @@ async def handle_planner_handoff(
 
     steps_results.append({"role": role_name, "model": model, "response": response})
 
-    await executor._force_unload(model)
-
     executor_role = "Executor_Tools"
     executor_sys = (
         executor.config.get("brigades", {}).get(brigade, {}).get("roles", {})
