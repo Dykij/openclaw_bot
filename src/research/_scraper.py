@@ -37,7 +37,7 @@ _EVIDENCE_TOKEN_BUDGET_CHARS = 96_000
 # v4: Fetch concurrency limiter — avoid thundering herd on Jina/Firecrawl
 _FETCH_SEMAPHORE_LIMIT = 3
 
-# v4: High-value domains ranked by general authority for research
+# v4+v5: High-value domains ranked by general authority for research
 _DOMAIN_PRIORITY: dict[str, int] = {
     "arxiv.org": 10,
     "github.com": 9,
@@ -51,6 +51,18 @@ _DOMAIN_PRIORITY: dict[str, int] = {
     "news.ycombinator.com": 6,
     "reddit.com": 5,
     "dev.to": 5,
+    # v5: expanded domain list
+    "pytorch.org": 8,
+    "tensorflow.org": 8,
+    "huggingface.co": 8,
+    "openai.com": 7,
+    "learn.microsoft.com": 7,
+    "papers.nips.cc": 9,
+    "proceedings.mlr.press": 9,
+    "sciencedirect.com": 8,
+    "nature.com": 9,
+    "ieee.org": 8,
+    "acm.org": 8,
 }
 
 
@@ -86,28 +98,53 @@ def extract_urls_from_search(evidence_pieces: List[str]) -> List[str]:
 def _content_quality_score(content: str) -> float:
     """Heuristic quality score for fetched page content (0.0 - 1.0).
 
-    Prefers: longer text, paragraphs, headers, code blocks.
-    Penalizes: cookie banners, login walls, error pages.
+    v5: improved with list/table detection, language diversity, link density.
+    Prefers: longer text, paragraphs, headers, code blocks, lists, tables.
+    Penalizes: cookie banners, login walls, error pages, paywall indicators.
     """
     if not content:
         return 0.0
     length = len(content)
-    score = min(length / 4000.0, 1.0) * 0.4  # length component (max 0.4)
+    score = min(length / 4000.0, 1.0) * 0.3  # length component (max 0.3)
 
     # Structural indicators
     paragraphs = content.count("\n\n")
-    score += min(paragraphs / 10.0, 1.0) * 0.2  # paragraph richness
+    score += min(paragraphs / 10.0, 1.0) * 0.15  # paragraph richness
 
     headers = len(re.findall(r"^#{1,3}\s", content, re.MULTILINE))
-    score += min(headers / 3.0, 1.0) * 0.15  # markdown headers
+    score += min(headers / 3.0, 1.0) * 0.1  # markdown headers
 
     code_blocks = content.count("```")
-    score += min(code_blocks / 4.0, 1.0) * 0.15  # code content
+    score += min(code_blocks / 4.0, 1.0) * 0.1  # code content
 
-    # Penalty: junk indicators
-    junk_patterns = ["cookie", "sign in", "log in", "subscribe", "403", "404", "access denied"]
-    junk_hits = sum(1 for p in junk_patterns if p.lower() in content[:500].lower())
-    score -= junk_hits * 0.1
+    # v5: list items (bullet/numbered) — indicates structured content
+    list_items = len(re.findall(r"^[\s]*[-*•]\s|^\s*\d+[.)]\s", content, re.MULTILINE))
+    score += min(list_items / 8.0, 1.0) * 0.1  # list richness
+
+    # v5: table indicators (pipes for markdown tables)
+    table_rows = content.count("|")
+    score += min(table_rows / 20.0, 1.0) * 0.05  # table content
+
+    # v5: link density — informational pages have links
+    links = len(re.findall(r"\[.+?\]\(.+?\)|https?://\S+", content))
+    score += min(links / 5.0, 1.0) * 0.1  # reference richness
+
+    # v5: technical terms — signals domain relevance
+    tech_terms = len(re.findall(
+        r"\b(?:API|SDK|framework|algorithm|model|dataset|benchmark|"
+        r"performance|implementation|architecture|optimization)\b",
+        content, re.IGNORECASE
+    ))
+    score += min(tech_terms / 5.0, 1.0) * 0.1
+
+    # Penalty: junk indicators (v5: expanded list)
+    junk_patterns = [
+        "cookie", "sign in", "log in", "subscribe", "403", "404",
+        "access denied", "paywall", "premium content", "register to continue",
+        "enable javascript", "captcha", "rate limit",
+    ]
+    junk_hits = sum(1 for p in junk_patterns if p.lower() in content[:800].lower())
+    score -= junk_hits * 0.08
 
     return max(0.0, min(1.0, score))
 
@@ -231,16 +268,26 @@ async def enrich_with_full_content(
 def apply_token_budget(evidence: List[str]) -> str:
     """Join evidence blocks within _EVIDENCE_TOKEN_BUDGET_CHARS.
 
-    Prevents context overflow when _synthesize sends all evidence to the LLM.
+    v5: progressive allocation — first blocks get full budget, later blocks
+    get progressively less space, ensuring most important evidence is preserved.
     Blocks are added in order (highest-priority first) until the budget is used up.
     """
     budget = _EVIDENCE_TOKEN_BUDGET_CHARS
     separator = "\n\n---\n\n"
     parts: List[str] = []
     used = 0
-    for block in evidence:
+    for i, block in enumerate(evidence):
+        # v5: progressive truncation — later blocks get trimmed more aggressively
+        if i > 10:
+            block = block[:_MAX_ENRICHED_CONTENT_CHARS // 2]
+        elif i > 20:
+            block = block[:_MAX_ENRICHED_CONTENT_CHARS // 4]
         block_len = len(block) + len(separator)
         if used + block_len > budget:
+            # v5: add partial block if possible (at least 200 chars)
+            remaining = budget - used - len(separator) - len(_TOKEN_BUDGET_TRUNCATION_NOTICE) - 20
+            if remaining > 200:
+                parts.append(block[:remaining])
             parts.append(_TOKEN_BUDGET_TRUNCATION_NOTICE)
             break
         parts.append(block)

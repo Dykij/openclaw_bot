@@ -424,7 +424,10 @@ def is_cloud_only() -> bool:
 # ---------------------------------------------------------------------------
 
 def _infer_task_type(prompt: str, hint: str) -> str:
-    """Infer a task type from prompt content when hint is generic."""
+    """Infer a task type from prompt content when hint is generic.
+
+    v5: improved detection with research/analysis task types.
+    """
     if hint not in ("general", ""):
         return hint
     lower = prompt[:500].lower()
@@ -434,6 +437,18 @@ def _infer_task_type(prompt: str, hint: str) -> str:
         return "math"
     if any(kw in lower for kw in ["напиши", "сочини", "creativ", "story", "стих"]):
         return "creative"
+    # v5: research detection
+    if any(kw in lower for kw in [
+        "исследуй", "research", "проанализируй", "analyze", "сравни", "compare",
+        "обзор", "review", "найди", "search", "источник", "source",
+    ]):
+        return "research"
+    # v5: analysis detection
+    if any(kw in lower for kw in [
+        "данны", "data", "метрик", "metric", "статистик", "statistic",
+        "график", "chart", "таблиц", "table",
+    ]):
+        return "analysis"
     return "general"
 
 

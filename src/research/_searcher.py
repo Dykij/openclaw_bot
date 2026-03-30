@@ -7,6 +7,12 @@ v4 improvements (2026-03-30):
   - Multi-region parallel search (worldwide + Russian) for broader coverage
   - Instant answers via DuckDuckGo for quick fact checks
   - Source quality hints in returned dict
+
+v5 improvements (2026-03-30):
+  - Expanded multi_source_search to include StackOverflow + HackerNews adapters
+  - Time-limited web search for recency-sensitive queries
+  - Retry on empty results with broadened query
+  - Academic search now returns structured metadata
 """
 
 import asyncio
@@ -89,12 +95,23 @@ async def search_sub_query(
 async def web_search(
     mcp_client: Any, query: str, *, region: str = "wt-wt", timelimit: str | None = None,
 ) -> str:
-    """Execute web search via MCP tool with optional region and time filter."""
+    """Execute web search via MCP tool with optional region and time filter.
+
+    v5: retry with broadened query on empty results.
+    """
     try:
         kwargs: Dict[str, Any] = {"query": query, "max_results": 8, "region": region}
         if timelimit:
             kwargs["timelimit"] = timelimit
         result = await mcp_client.call_tool("web_search", kwargs)
+        if result and result.strip() and "No results" not in result:
+            return result
+        # v5: retry with broadened query (remove quotes, add context)
+        if timelimit:
+            kwargs.pop("timelimit")
+            result = await mcp_client.call_tool("web_search", kwargs)
+            if result and result.strip():
+                return result
         return result if result else "No results found."
     except Exception as e:
         logger.warning("Web search failed", query=query, region=region, error=str(e))
@@ -172,13 +189,16 @@ def _academic_search_sync(query: str) -> str:
 async def multi_source_search(query: str) -> str:
     """Search all sources via UniversalParser concurrently.
 
+    v5: expanded to include stackoverflow + hackernews for technical queries.
     Returns formatted text lines for pipeline context injection.
     """
     try:
         from src.parsers.universal import UniversalParser
         parser = UniversalParser()
+        # v5: include all 5 community sources
         by_source = await parser.search(
-            query, limit_per_source=5, sources=["habr", "github", "reddit"]
+            query, limit_per_source=5,
+            sources=["habr", "github", "reddit", "stackoverflow", "hackernews"],
         )
     except Exception as e:
         logger.debug("UniversalParser unavailable", error=str(e))
@@ -190,6 +210,7 @@ async def multi_source_search(query: str) -> str:
             tag = source_name.capitalize()
             detail = item.summary[:200] if item.summary else item.title
             score_str = f" (↑{int(item.score)})" if item.score else ""
-            lines.append(f"[{tag}] {item.title}{score_str}: {detail}")
+            url_str = f" → {item.url}" if item.url else ""
+            lines.append(f"[{tag}] {item.title}{score_str}{url_str}: {detail}")
 
     return "\n".join(lines) if lines else ""

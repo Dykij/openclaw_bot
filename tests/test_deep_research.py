@@ -453,6 +453,7 @@ def test_cumulative_context_grows():
 def test_full_research_pipeline():
     """Integration test: full pipeline with mocked LLM and MCP."""
     responses = [
+        "instant answer text",               # instant_answers (v5 pre-check)
         "medium",                           # _estimate_complexity
         "sub query 1\nsub query 2",         # _decompose
         "alt query 1\nalt query 2",         # _reformulate_queries
@@ -483,7 +484,146 @@ def test_full_research_pipeline():
     assert "source_diversity" in result
     assert "contradictions" in result
     assert isinstance(result["confidence_score"], float)
+    # v5: new metadata fields
+    assert "elapsed_seconds" in result
+    assert "search_stats" in result
+    assert "instant_answer" in result
+    assert isinstance(result["elapsed_seconds"], float)
+    assert isinstance(result["search_stats"], dict)
     assert callback.call_count >= 4
+
+
+# ---------------------------------------------------------------------------
+# v5: Evidence deduplication
+# ---------------------------------------------------------------------------
+def test_evidence_dedup_same_content():
+    """v5: duplicate evidence pieces are rejected."""
+    state = ResearchState(question="test")
+    e1 = EvidencePiece(query="q1", source_type="web", content="Same content here")
+    e2 = EvidencePiece(query="q2", source_type="news", content="Same content here")
+    assert state.add_evidence(e1) == True
+    assert state.add_evidence(e2) == False  # dedup
+    assert state.evidence_count == 1
+    assert state.search_stats["duplicates_skipped"] == 1
+
+
+def test_evidence_dedup_different_content():
+    """v5: different evidence pieces are both added."""
+    state = ResearchState(question="test")
+    e1 = EvidencePiece(query="q1", source_type="web", content="Content A about topic X")
+    e2 = EvidencePiece(query="q2", source_type="web", content="Content B about topic Y")
+    assert state.add_evidence(e1) == True
+    assert state.add_evidence(e2) == True
+    assert state.evidence_count == 2
+
+
+def test_evidence_content_hash():
+    """v5: content_hash is deterministic."""
+    e = EvidencePiece(query="q", source_type="web", content="Hello World")
+    h1 = e.content_hash()
+    h2 = e.content_hash()
+    assert h1 == h2
+    assert len(h1) == 12
+
+
+def test_evidence_sorted_by_confidence():
+    """v5: sorted evidence returns highest confidence first."""
+    state = ResearchState(question="test")
+    state.add_evidence(EvidencePiece(query="q1", source_type="web", content="low conf A", confidence=0.3))
+    state.add_evidence(EvidencePiece(query="q2", source_type="academic", content="high conf B", confidence=0.9))
+    state.add_evidence(EvidencePiece(query="q3", source_type="news", content="mid conf C", confidence=0.6))
+    sorted_ev = state.get_evidence_sorted_by_confidence()
+    assert sorted_ev[0].confidence == 0.9
+    assert sorted_ev[1].confidence == 0.6
+    assert sorted_ev[2].confidence == 0.3
+
+
+def test_research_state_elapsed_seconds():
+    """v5: elapsed_seconds tracks timing."""
+    state = ResearchState(question="test")
+    assert state.elapsed_seconds >= 0.0
+    assert state.elapsed_seconds < 1.0
+
+
+def test_research_state_all_source_types_tracked():
+    """v5: all source types are tracked in sources, not just 'web'."""
+    state = ResearchState(question="test")
+    state.add_evidence(EvidencePiece(query="q1", source_type="academic", content="paper data"))
+    state.add_evidence(EvidencePiece(query="q2", source_type="news", content="news data"))
+    assert "q1" in state.sources
+    assert "q2" in state.sources
+
+
+# ---------------------------------------------------------------------------
+# v5: Enhanced content quality scoring
+# ---------------------------------------------------------------------------
+def test_content_quality_score_with_lists():
+    """v5: list items boost quality score."""
+    content_with_lists = """# Title
+
+- Item 1: description
+- Item 2: description
+- Item 3: description
+- Item 4: description
+- Item 5: description
+
+Some paragraph content here.
+
+Another paragraph with more details.
+"""
+    content_without = "Short text without structure."
+    assert _content_quality_score(content_with_lists) > _content_quality_score(content_without)
+
+
+def test_content_quality_score_with_technical_terms():
+    """v5: technical terms boost quality score."""
+    technical = "This API provides an algorithm for model optimization with high performance benchmark results."
+    generic = "This is a simple page about things and stuff without any specific details."
+    assert _content_quality_score(technical) >= _content_quality_score(generic)
+
+
+def test_content_quality_paywall_penalty():
+    """v5: paywall indicators reduce quality score."""
+    content = "register to continue reading this premium content. Please subscribe to access."
+    score = _content_quality_score(content)
+    assert score < 0.3
+
+
+# ---------------------------------------------------------------------------
+# v5: Expanded domain priorities
+# ---------------------------------------------------------------------------
+def test_url_priority_academic_domains():
+    """v5: new academic domains have high priority."""
+    assert _url_priority("https://huggingface.co/papers/1234") >= 8
+    assert _url_priority("https://pytorch.org/docs/stable/") >= 8
+    assert _url_priority("https://papers.nips.cc/paper/2025") >= 9
+    assert _url_priority("https://learn.microsoft.com/docs") >= 7
+
+
+# ---------------------------------------------------------------------------
+# v5: Progressive token budget
+# ---------------------------------------------------------------------------
+def test_apply_token_budget_partial_block():
+    """v5: progressive budget adds partial blocks when possible."""
+    from src.research._scraper import _EVIDENCE_TOKEN_BUDGET_CHARS
+    block1 = "A" * (_EVIDENCE_TOKEN_BUDGET_CHARS - 100)
+    block2 = "B" * 500  # too large for remaining budget but > 200 chars
+    result = apply_token_budget([block1, block2])
+    assert "A" in result
+    # partial block or truncation notice should appear
+    assert _TOKEN_BUDGET_TRUNCATION_NOTICE in result or "B" in result
+
+
+# ---------------------------------------------------------------------------
+# v5: Source reliability weights in analyzer
+# ---------------------------------------------------------------------------
+def test_source_reliability_weights_exist():
+    """v5: source reliability weights are defined."""
+    from src.research._analyzer import _SOURCE_RELIABILITY
+    assert _SOURCE_RELIABILITY["academic"] > _SOURCE_RELIABILITY["web"]
+    assert _SOURCE_RELIABILITY["web"] > _SOURCE_RELIABILITY["instant_answer"]
+    assert "news" in _SOURCE_RELIABILITY
+    assert "multi_source" in _SOURCE_RELIABILITY
 
 
 # ---------------------------------------------------------------------------

@@ -315,7 +315,10 @@ def _with_retry(fn, *args, **kwargs) -> Any:
 def _sync_search(
     query: str, max_results: int, region: str, timelimit: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Run DuckDuckGo text search synchronously with retry + caching."""
+    """Run DuckDuckGo text search synchronously with retry + caching.
+
+    v5: enriched results with relevance indicators.
+    """
     ck = _cache_key("search", q=query, n=max_results, r=region, t=timelimit)
     cached = _cache_get(ck)
     if cached is not None:
@@ -334,6 +337,19 @@ def _sync_search(
 
     results = _with_retry(_do)
     results = _dedup_results(results)
+
+    # v5: enrich results with relevance score based on query term overlap
+    query_terms = set(query.lower().split())
+    for r in results:
+        title = (r.get("title") or "").lower()
+        body = (r.get("body") or r.get("snippet") or "").lower()
+        combined = title + " " + body
+        overlap = sum(1 for t in query_terms if t in combined)
+        r["_relevance"] = overlap / max(len(query_terms), 1)
+
+    # v5: sort by relevance (stable sort preserves DuckDuckGo's ranking for ties)
+    results.sort(key=lambda r: r.get("_relevance", 0), reverse=True)
+
     _cache_put(ck, results)
     return results
 
@@ -406,8 +422,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         formatted = []
         for i, r in enumerate(results, 1):
+            relevance = r.get("_relevance", 0)
+            rel_str = f" [rel: {relevance:.0%}]" if relevance > 0 else ""
             formatted.append(
-                f"{i}. **{r.get('title', 'N/A')}**\n"
+                f"{i}. **{r.get('title', 'N/A')}**{rel_str}\n"
                 f"   URL: {r.get('href', r.get('link', 'N/A'))}\n"
                 f"   {r.get('body', r.get('snippet', ''))}"
             )
