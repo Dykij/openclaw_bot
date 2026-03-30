@@ -7,10 +7,11 @@ in Language Models", arXiv:2210.03629.
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.llm_gateway import route_llm
+
 from src.ai.agents._shared import (
     ReActStep,
     ReActResult,
-    call_vllm,
     logger,
 )
 
@@ -20,8 +21,7 @@ class ReActReasoner:
 
     _FINISH_ACTION = "Finish"
 
-    def __init__(self, vllm_url: str = "", model: str = ""):
-        self.vllm_url = vllm_url.rstrip("/") if vllm_url else ""
+    def __init__(self, model: str = ""):
         self.model = model
 
     async def reason(
@@ -36,13 +36,13 @@ class ReActReasoner:
 
         for step_idx in range(1, max_steps + 1):
             react_prompt = self.format_react_prompt(prompt, history, tools)
-            raw = await call_vllm(
-                self.vllm_url,
-                self.model,
-                [
+            raw = await route_llm(
+                "",
+                messages=[
                     {"role": "system", "content": self._system_prompt(tools)},
                     {"role": "user", "content": react_prompt},
                 ],
+                model=self.model,
                 temperature=0.2,
             )
 

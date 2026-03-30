@@ -1,8 +1,8 @@
 """Mixture-of-Agents — multi-perspective generation with aggregation.
 
-**WARNING**: On a 16 GB GPU this triples inference time (3 sequential
-generations + 1 aggregation per request).  Use only for high-stakes
-tasks where quality is more important than latency.
+Generations run sequential to ensure quality (3 proposals + 1
+aggregation per request).  Use only for high-stakes tasks where
+quality is more important than latency.
 
 Reference: Wang et al., "Mixture-of-Agents Enhances Large Language
 Model Capabilities", arXiv:2406.04692.
@@ -11,9 +11,10 @@ Model Capabilities", arXiv:2406.04692.
 import time
 from typing import List, Optional
 
+from src.llm_gateway import route_llm
+
 from src.ai.agents._shared import (
     MoAResult,
-    call_vllm,
     logger,
 )
 
@@ -33,11 +34,9 @@ class MixtureOfAgents:
 
     def __init__(
         self,
-        vllm_url: str = "",
         model: str = "",
         num_proposers: int = 3,
     ):
-        self.vllm_url = vllm_url.rstrip("/") if vllm_url else ""
         self.model = model
         self.num_proposers = num_proposers
 
@@ -49,17 +48,17 @@ class MixtureOfAgents:
         prompts = self._resolve_system_prompts(system_prompts)
         start = time.monotonic()
 
-        # Layer 1 — sequential to stay within 16 GB VRAM
+        # Layer 1 — sequential to ensure quality
         proposals: List[str] = []
         for idx, sys_prompt in enumerate(prompts):
             logger.info("moa_proposer", proposer=idx + 1, total=len(prompts))
-            proposal = await call_vllm(
-                self.vllm_url,
-                self.model,
-                [
+            proposal = await route_llm(
+                "",
+                messages=[
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": prompt},
                 ],
+                model=self.model,
                 temperature=0.5 + idx * 0.1,
             )
             proposals.append(proposal)
@@ -91,12 +90,12 @@ class MixtureOfAgents:
             f"{numbered}\n\n"
             "Synthesised answer:"
         )
-        return await call_vllm(
-            self.vllm_url,
-            self.model,
-            [
+        return await route_llm(
+            "",
+            messages=[
                 {"role": "system", "content": "You synthesise multiple expert responses into one best answer."},
                 {"role": "user", "content": agg_prompt},
             ],
+            model=self.model,
             temperature=0.2,
         )
