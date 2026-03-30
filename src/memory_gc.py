@@ -1,7 +1,7 @@
 """
 Brigade: OpenClaw
 Role: Memory GC (Anchored Iterative Context Compressor v2)
-Model: google/gemma-3-12b-it (vLLM local)
+Model: cloud LLM via route_llm (OpenRouter API)
 
 Replaces naive one-shot summarization with anchored iterative compression:
 - Maintains a persistent summary across invocations
@@ -14,7 +14,11 @@ import asyncio
 import os
 from typing import Dict, List, Optional
 
-import aiohttp
+import structlog
+
+from src.llm_gateway import route_llm
+
+logger = structlog.get_logger("MemoryGC")
 
 
 # Rough token estimation: ~4 chars ≈ 1 token (works for English/Russian mix)
@@ -41,9 +45,11 @@ class MemoryGarbageCollector:
     AGGRESSIVE_COMPRESSION_AFTER = 3  # After N compressions, shrink harder
     AGGRESSIVE_MAX_WORDS = 150  # Tighter word limit in aggressive mode
 
-    def __init__(self, vllm_url: str = "http://localhost:8000/v1"):
-        self.vllm_url = vllm_url.rstrip("/")
-        self.model = "google/gemma-3-12b-it"
+    def __init__(self, config: dict = None):
+        if config and config.get("system", {}).get("model_router", {}).get("memory_gc"):
+            self.model = config["system"]["model_router"]["memory_gc"]
+        else:
+            self.model = "google/gemma-3-12b-it:free"
         self._persistent_summary: str = ""
         self._compression_count: int = 0
         self._critical_facts: list = []  # Never-forget facts extracted during compression
@@ -150,36 +156,15 @@ class MemoryGarbageCollector:
                 f"CONVERSATION:\n{new_text}"
             )
 
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "max_tokens": 1024,
-        }
-        async def _run_inference():
-            async with aiohttp.ClientSession() as session:
-                try:
-                    async with session.post(
-                        f"{self.vllm_url}/chat/completions",
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            return data["choices"][0]["message"]["content"].strip()
-                        else:
-                            print(f"[Memory GC] API Error: {response.status}")
-                            return "ERROR_SUMMARIZING_CONTEXT"
-                except asyncio.TimeoutError:
-                    print("[Memory GC] Timeout during compression")
-                    return "ERROR_SUMMARIZING_CONTEXT"
-                except Exception as e:
-                    print(f"[Memory GC] Exception: {e}")
-                    return "ERROR_SUMMARIZING_CONTEXT"
-
-        from src.task_queue import model_queue
-
-        return await model_queue.enqueue(self.model, _run_inference)
+        try:
+            result = await route_llm(prompt, model=self.model, max_tokens=1024)
+            return result or "ERROR_SUMMARIZING_CONTEXT"
+        except asyncio.TimeoutError:
+            logger.warning("Timeout during compression")
+            return "ERROR_SUMMARIZING_CONTEXT"
+        except Exception as e:
+            logger.warning("Memory GC compression failed", error=str(e))
+            return "ERROR_SUMMARIZING_CONTEXT"
 
     def _extract_critical_facts(self, summary: str):
         """Extract CRITICAL: lines from summary and pin them for future compressions."""
