@@ -5,11 +5,16 @@ Role: Pipeline Executor (Chain-of-Agents) — Core
 Implements the workflow chains described in SOUL.md.
 Delegates state management to _state.py, reflexion to _reflexion.py,
 and tool execution to _tools_handler.py.
+
+Submodules (extracted for modularity):
+  _role_executor  — single-step execution + vLLM inference
+  _chain_selector — static / dynamic chain selection
+  _ensemble       — parallel Executor instances with consensus
+  _multi_task     — prompt decomposition + parallel sub-task execution
 """
 
 import asyncio
 import json
-import logging
 import os
 import re
 import time
@@ -21,18 +26,15 @@ import structlog
 
 from src.auto_rollback import AutoRollback
 from src.mcp_client import OpenClawMCPClient
-from src.task_queue import ModelTaskQueue
 from src.ai.inference.metrics import InferenceMetricsCollector
 from src.utils.async_utils import taskgroup_gather
 from src.ai.inference.budget import AdaptiveTokenBudget
 from src.ai.inference.router import SmartModelRouter
-from src.ai.inference._shared import ModelProfile, RoutingTask
 
 from src.pipeline_schemas import (
     GUARDRAIL_MAX_RETRIES,
     ROLE_GUARDRAILS,
     ROLE_SCHEMAS,
-    ROLE_TOKEN_BUDGET,
     TOOL_ELIGIBLE_ROLES,
     PipelineStepResult,
     PipelineResult,
@@ -43,12 +45,10 @@ from src.pipeline_utils import (
     compress_for_next_step,
     emergency_compress,
     group_chain,
-    sanitize_file_content,
 )
 from src.code_validator import CodeValidator
 from src.context_bridge import ContextBridge
 from src.vllm_inference import (
-    call_vllm,
     execute_stream,
     force_unload,
     vram_protection,
@@ -85,112 +85,25 @@ from src.pipeline._tool_call_parser import (
     format_observations,
 )
 
+# --- Extracted submodules ---
+from src.pipeline._role_executor import call_vllm_inference, run_single_step
+from src.pipeline._chain_selector import (
+    get_chain as _get_chain,
+    get_chain_dynamic as _get_chain_dynamic,
+)
+from src.pipeline._ensemble import ensemble_vote
+from src.pipeline._multi_task import (
+    _decompose_multi_task,
+    _route_subtask,
+    execute_multi_task,
+    # Re-export constants for backward compatibility
+    _ACTION_VERBS_RE,
+    _SEMANTIC_MIN_LEN,
+    _NUMBERED_RE,
+    _BRIGADE_KEYWORDS,
+)
+
 logger = structlog.get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# v14.4: Multi-Task Decomposer  (P1-1 / P1-3 hotfix)
-# ---------------------------------------------------------------------------
-
-_NUMBERED_RE = re.compile(
-    r"(?:^|\n)\s*(\d+)\.\s+(.+?)(?=\n\s*\d+\.\s|\Z)",
-    re.DOTALL,
-)
-
-# v15.3: Action verbs that signal a new sub-task in unnumbered paragraphs
-_ACTION_VERBS_RE = re.compile(
-    r"^(?:Сделай|Проанализируй|Напиши|Найди|Создай|Проверь|Check|Create|Write|Find|Analyze|Build|Implement|Audit|Auditor:)",
-    re.IGNORECASE,
-)
-# Minimum prompt length to attempt semantic paragraph splitting
-_SEMANTIC_MIN_LEN = 300
-
-# Keyword → brigade mapping (reused from intent_classifier)
-_BRIGADE_KEYWORDS: dict[str, list[str]] = {
-    "Dmarket-Dev": [
-        "dmarket", "buy", "sell", "trade", "price", "skin", "inventory",
-        "купить", "продать", "торговля", "скин", "инвентарь", "арбитраж",
-        "pyo3", "подпис", "hft", "latency",
-    ],
-    "Research-Ops": [
-        "research", "найди", "поищи", "youtube", "видео", "video",
-        "url", "http", "ссылк", "статью", "интернет", "анализ",
-        "vision", "проанализируй",
-    ],
-    "OpenClaw-Core": [
-        "config", "pipeline", "model", "bot", "openclaw", "gateway",
-        "конфиг", "бригад", "бот", "память", "memory", "mcp",
-        "code", "python", "rust", "напиши", "функци",
-    ],
-}
-
-
-def _route_subtask(text: str) -> str:
-    """Route a single sub-task to the most relevant brigade by keywords."""
-    lower = text.lower()
-    scores: dict[str, int] = {}
-    for brigade, keywords in _BRIGADE_KEYWORDS.items():
-        scores[brigade] = sum(1 for kw in keywords if kw in lower)
-    best = max(scores, key=scores.get)  # type: ignore[arg-type]
-    return best if scores[best] > 0 else "OpenClaw-Core"
-
-
-def _decompose_multi_task(prompt: str) -> list[tuple[str, str]]:
-    """Split a prompt into (sub_task_text, brigade) pairs.
-
-    v15.3: Two-pass strategy:
-    1. Try numbered-list regex ("1. ... 2. ...").
-    2. Fallback: semantic paragraph splitting — split on \n\n or \n,
-       keeping paragraphs that start with an action verb as separate tasks.
-
-    Returns an empty list if the prompt doesn't look like a multi-task.
-    """
-    # --- Pass 1: numbered-list regex ---
-    matches = _NUMBERED_RE.findall(prompt)
-    if len(matches) >= 2:
-        sub_tasks: list[tuple[str, str]] = []
-        for _num, body in matches:
-            body = body.strip()
-            if body:
-                brigade = _route_subtask(body)
-                sub_tasks.append((body, brigade))
-        return sub_tasks
-
-    # --- Pass 2: semantic paragraph splitting (v15.3) ---
-    # Strip any [CHAT HISTORY] prefix before analysing paragraphs
-    analysis_text = prompt
-    if "[CURRENT TASK]:" in prompt:
-        analysis_text = prompt.split("[CURRENT TASK]:", 1)[1].strip()
-
-    if len(analysis_text) < _SEMANTIC_MIN_LEN:
-        return []
-
-    # Split on double-newline first; fallback to single-newline
-    paragraphs = [p.strip() for p in re.split(r"\n\n+", analysis_text) if p.strip()]
-    if len(paragraphs) < 2:
-        paragraphs = [p.strip() for p in analysis_text.split("\n") if p.strip()]
-
-    # Keep only paragraphs that look like actionable tasks (action verb at start)
-    action_paragraphs: list[str] = []
-    # First paragraph is always the context/intro — include it as a task too
-    # if it contains a URL or is long enough
-    for para in paragraphs:
-        if _ACTION_VERBS_RE.search(para):
-            action_paragraphs.append(para)
-        elif re.search(r"https?://", para) and len(para) > 40:
-            # URL-bearing paragraphs are implicit research tasks
-            action_paragraphs.append(para)
-
-    if len(action_paragraphs) < 2:
-        return []
-
-    sub_tasks = []
-    for para in action_paragraphs:
-        brigade = _route_subtask(para)
-        sub_tasks.append((para, brigade))
-    logger.info("Semantic decomposer activated (v15.3)",
-                n_paragraphs=len(paragraphs), n_tasks=len(sub_tasks))
-    return sub_tasks
 
 
 async def _async_save_trajectory(supermemory, prompt, chain, complexity, steps_results, response):
@@ -419,12 +332,7 @@ class PipelineExecutor:
             logger.warning("vLLM server not reachable (will start on first request)", error=str(e))
 
     def get_chain(self, brigade: str) -> List[str]:
-        brigade_config = self.config.get("brigades", {}).get(brigade, {})
-        if "pipeline" in brigade_config:
-            return brigade_config["pipeline"]
-        available_roles = set(brigade_config.get("roles", {}).keys())
-        default_chain = self.default_chains.get(brigade, ["Planner"])
-        return [role for role in default_chain if role in available_roles]
+        return _get_chain(self.config, self.default_chains, brigade)
 
     async def get_chain_dynamic(
         self,
@@ -432,62 +340,12 @@ class PipelineExecutor:
         brigade: str,
         max_steps: int = 7,
     ) -> tuple[List[str], str]:
-        """v13.2 AFlow: generate optimal chain for this prompt.
-
-        Returns (chain, source) where source is "heuristic"|"llm"|"lats"|"fallback".
-        Falls back to static get_chain() on any error.
-        """
-        # Если в конфиге явно задан pipeline — уважаем его (не override)
-        brigade_config = self.config.get("brigades", {}).get(brigade, {})
-        if "pipeline" in brigade_config:
-            return brigade_config["pipeline"][:max_steps], "config"
-
-        available_roles = list(brigade_config.get("roles", {}).keys())
-        if not available_roles:
-            return self.get_chain(brigade)[:max_steps], "fallback"
-
-        try:
-            aflow_result = await self._aflow.generate_chain(
-                prompt=prompt,
-                brigade=brigade,
-                available_roles=available_roles,
-                config=self.config,
-                max_chain_len=max_steps,
-            )
-            chain = aflow_result.chain or self.get_chain(brigade)
-
-            # v14.1: ProRL — evaluate AFlow chain vs static fallback
-            static_chain = self.get_chain(brigade)[:max_steps]
-            _complexity = classify_complexity(prompt)
-            try:
-                prorl_result = self._prorl.evaluate_candidates(
-                    candidates=[
-                        (chain[:max_steps], aflow_result.source),
-                        (static_chain, "static"),
-                    ],
-                    complexity=_complexity,
-                )
-                chain = prorl_result.selected_chain
-                source = prorl_result.selected_source
-                logger.info(
-                    "ProRL: chain selected",
-                    chain=chain, source=source,
-                    score=prorl_result.best_score,
-                )
-                return chain, source
-            except Exception as _prorl_err:
-                logger.debug("ProRL evaluation failed (non-fatal)", error=str(_prorl_err))
-
-            logger.info(
-                "AFlow chain generated",
-                chain=chain,
-                source=aflow_result.source,
-                confidence=round(aflow_result.confidence, 2),
-            )
-            return chain[:max_steps], aflow_result.source
-        except Exception as e:
-            logger.warning("AFlow chain generation failed, using static chain", error=str(e))
-            return self.get_chain(brigade)[:max_steps], "fallback"
+        return await _get_chain_dynamic(
+            prompt=prompt, brigade=brigade, config=self.config,
+            default_chains=self.default_chains, aflow_engine=self._aflow,
+            prorl_engine=self._prorl, get_chain_fn=self.get_chain,
+            max_steps=max_steps,
+        )
 
     async def execute(
         self,
@@ -1332,21 +1190,14 @@ class PipelineExecutor:
 
     async def _run_single_step(self, role_name, step_index, chain_len, brigade, prompt, context_briefing, status_callback=None, task_type=None) -> str:
         """Run a single pipeline step (used for parallel Executor dispatch)."""
-        role_config = self.config.get("brigades", {}).get(brigade, {}).get("roles", {}).get(role_name, {})
-        if not role_config:
-            return f"⚠️ Role '{role_name}' not found in config."
-        model = role_config.get("model", "meta-llama/llama-3.3-70b-instruct:free")
-        display_model = self._display_model(role_config, model)
-        system_prompt = build_role_prompt(role_name, role_config, self._framework_root)
-        step_prompt = (
-            f"[PIPELINE CONTEXT from previous step]\n{context_briefing}\n\n"
-            f"[ORIGINAL USER TASK]\n{prompt}\n\n"
-            f"Based on the above context, perform your role as {role_name}."
+        return await run_single_step(
+            role_name=role_name, step_index=step_index, chain_len=chain_len,
+            brigade=brigade, prompt=prompt, context_briefing=context_briefing,
+            config=self.config, framework_root=self._framework_root,
+            openclaw_mcp=self.openclaw_mcp, dmarket_mcp=self.dmarket_mcp,
+            display_model_fn=self._display_model, call_vllm_fn=self._call_vllm,
+            status_callback=status_callback, task_type=task_type,
         )
-        if status_callback:
-            await status_callback(role_name, display_model, f"⚡ Параллельно: {role_name} работает...")
-        active_mcp = self.openclaw_mcp if brigade == "OpenClaw" else self.dmarket_mcp
-        return await self._call_vllm(model, system_prompt, step_prompt, role_name, role_config, active_mcp)
 
     def _display_model(self, role_config: Dict[str, Any], fallback_model: str = "") -> str:
         if self.openrouter_enabled:
@@ -1370,196 +1221,23 @@ class PipelineExecutor:
         n_instances: int = 2,
         auditor_role_config: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Run N Executor instances in parallel with temperature diversity,
-        then select the best response via Auditor consensus scoring.
-
-        v13.2: uses asyncio.TaskGroup for parallel inference.
-        - Instance 0: temperature=0.7 (balanced)
-        - Instance 1: temperature=1.0 (creative / alternative view)
-        - Auditor (if available): scores all candidates and picks winner
-          or synthesises a final composite answer.
-
-        Falls back to single-instance call on any errors.
-        """
-        temperatures = [0.7, 1.0, 0.5][:n_instances]
-
-        async def _run_at_temp(temp: float) -> str:
-            # Patch role_config temperature inline — non-destructive copy
-            patched_config = dict(role_config)
-            patched_config["temperature"] = temp
-            try:
-                return await self._call_vllm(
-                    model, system_prompt, step_prompt,
-                    role_name, patched_config, active_mcp,
-                    preserve_think=False,
-                )
-            except Exception as e:
-                logger.warning("Ensemble instance failed", temp=temp, error=str(e))
-                return ""
-
-        # Launch all instances concurrently
-        tasks = [_run_at_temp(t) for t in temperatures]
-        candidates: List[str] = []
-        try:
-            async with asyncio.TaskGroup() as tg:
-                futures = [tg.create_task(_run_at_temp(t)) for t in temperatures]
-            candidates = [f.result() for f in futures if f.result()]
-        except* Exception as eg:
-            logger.warning("Ensemble TaskGroup error", errors=str(eg))
-            # Graceful fallback via gather
-            raw = await asyncio.gather(*tasks, return_exceptions=True)
-            candidates = [r for r in raw if isinstance(r, str) and r]
-
-        if not candidates:
-            logger.warning("Ensemble: all instances failed, single fallback")
-            return await self._call_vllm(
-                model, system_prompt, step_prompt, role_name, role_config, active_mcp,
-            )
-
-        if len(candidates) == 1:
-            return candidates[0]
-
-        # --- Auditor consensus scoring ---
-        auditor_cfg = auditor_role_config or {}
-        auditor_model = auditor_cfg.get("model") or auditor_cfg.get("openrouter_model") or model
-
-        candidates_block = "\n\n".join(
-            f"[CANDIDATE {i + 1}]:\n{c[:1500]}"
-            for i, c in enumerate(candidates)
+        return await ensemble_vote(
+            role_name=role_name, model=model, system_prompt=system_prompt,
+            step_prompt=step_prompt, role_config=role_config, active_mcp=active_mcp,
+            call_vllm_fn=self._call_vllm, counterfactual=self._counterfactual,
+            n_instances=n_instances, auditor_role_config=auditor_role_config,
         )
-        vote_prompt = (
-            f"You are an expert judge. The following are {len(candidates)} candidate responses "
-            f"to the same task. Analyse each, then either:\n"
-            f"a) Select the best candidate verbatim (output: 'WINNER: <N>'), or\n"
-            f"b) Synthesise a superior composite answer using the best parts.\n\n"
-            f"TASK:\n{step_prompt[:600]}\n\n"
-            f"{candidates_block}\n\n"
-            f"Your verdict (winner or composite):"
-        )
-        vote_system = (
-            "You are a senior technical reviewer. Evaluate response quality, correctness, "
-            "completeness and absence of hallucinations. Output the best answer directly."
-        )
-
-        try:
-            verdict = await self._call_vllm(
-                auditor_model,
-                vote_system,
-                vote_prompt,
-                "Ensemble_Auditor",
-                auditor_cfg or role_config,
-                active_mcp,
-            )
-            # If verdict references a specific winner, return that candidate
-            m = re.search(r'WINNER:\s*(\d+)', verdict or "")
-            if m:
-                idx = int(m.group(1)) - 1
-                if 0 <= idx < len(candidates):
-                    logger.info("Ensemble: Auditor selected winner", idx=idx + 1)
-                    # v14.1: Counterfactual Credit — record vote outcome
-                    try:
-                        self._counterfactual.record_vote(
-                            role=role_name, temperatures=temperatures,
-                            candidates=candidates, winner_index=idx,
-                        )
-                    except Exception:
-                        pass
-                    return candidates[idx]
-            # Otherwise return the synthesised composite
-            if verdict and len(verdict.strip()) > 30:
-                logger.info("Ensemble: Auditor synthesised composite answer")
-                # v14.1: Counterfactual Credit — composite = first candidate wins by default
-                try:
-                    self._counterfactual.record_vote(
-                        role=role_name, temperatures=temperatures,
-                        candidates=candidates, winner_index=0,
-                    )
-                except Exception:
-                    pass
-                return verdict
-        except Exception as e:
-            logger.warning("Ensemble Auditor failed, using longest candidate", error=str(e))
-
-        # Last resort: return longest (most complete) candidate
-        return max(candidates, key=len)
 
     async def _call_vllm(self, model, system_prompt, user_prompt, role_name, role_config, mcp_client, preserve_think=False, json_schema=None) -> str:
-        or_model = role_config.get("openrouter_model")
-        if not or_model and self._smart_router:
-            task_type = "general"
-            lower_prompt = user_prompt[:500].lower()
-            if any(kw in lower_prompt for kw in ["код", "code", "функци", "class", "def ", "import "]):
-                task_type = "code"
-            elif any(kw in lower_prompt for kw in ["math", "матем", "вычисл", "формул"]):
-                task_type = "math"
-            elif any(kw in lower_prompt for kw in ["напиши", "сочини", "creativ", "story", "стих"]):
-                task_type = "creative"
-            routed_model = self._smart_router.route(RoutingTask(prompt=user_prompt[:300], task_type=task_type))
-            if routed_model:
-                or_model = routed_model
-                logger.info("SmartRouter selected model", model=or_model, task_type=task_type, role=role_name)
-
-        fallback = role_config.get("fallback_model", model)
-
-        # --- AUDITOR ISOLATION: truncate context + fallback model ---
-        is_auditor = "Auditor" in role_name
-        if is_auditor:
-            auditor_budget = ROLE_TOKEN_BUDGET.get("Auditor", 1536)
-            max_prompt_chars = auditor_budget * 4  # ~4 chars per token
-            if len(user_prompt) > max_prompt_chars:
-                logger.warning(
-                    "Auditor context truncated",
-                    original_chars=len(user_prompt),
-                    budget_chars=max_prompt_chars,
-                )
-                user_prompt = user_prompt[:max_prompt_chars] + "\n\n[... контекст сокращён для Auditor ...]"
-
-        t0 = time.monotonic()
-        if self.openrouter_enabled and or_model:
-            result = await call_openrouter(
-                openrouter_config=self.openrouter_config,
-                vllm_url=self.vllm_url,
-                model=or_model,
-                fallback_model=fallback,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                role_name=role_name,
-                role_config=role_config,
-                mcp_client=mcp_client,
-                config=self.config,
-                vllm_manager=self.vllm_manager,
-                preserve_think=preserve_think,
-                json_schema=json_schema,
-            )
-        else:
-            result = await call_vllm(
-                vllm_url=self.vllm_url,
-                model=model,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                role_name=role_name,
-                role_config=role_config,
-                mcp_client=mcp_client,
-                config=self.config,
-                vllm_manager=self.vllm_manager,
-                preserve_think=preserve_think,
-                json_schema=json_schema,
-            )
-        elapsed_ms = (time.monotonic() - t0) * 1000
-
-        used_model = or_model or model
-        from src.utils.token_counter import estimate_tokens as _est_tokens
-        prompt_tokens_est = _est_tokens(system_prompt) + _est_tokens(user_prompt)
-        completion_tokens_est = _est_tokens(result)
-        self.metrics_collector.record_inference(
-            model=used_model,
-            prompt_tokens=prompt_tokens_est,
-            completion_tokens=completion_tokens_est,
-            total_latency_ms=elapsed_ms,
-            first_token_ms=elapsed_ms * 0.15,
+        return await call_vllm_inference(
+            model=model, system_prompt=system_prompt, user_prompt=user_prompt,
+            role_name=role_name, role_config=role_config, mcp_client=mcp_client,
+            vllm_url=self.vllm_url, openrouter_enabled=self.openrouter_enabled,
+            openrouter_config=self.openrouter_config, smart_router=self._smart_router,
+            config=self.config, vllm_manager=self.vllm_manager,
+            metrics_collector=self.metrics_collector,
+            preserve_think=preserve_think, json_schema=json_schema,
         )
-        logger.debug("Inference metrics recorded", model=used_model, latency_ms=round(elapsed_ms), role=role_name)
-        return result
 
     # ------------------------------------------------------------------
     # v14.4: Multi-Task parallel execution
@@ -1573,65 +1251,11 @@ class PipelineExecutor:
         status_callback,
     ) -> Dict[str, Any]:
         """Run decomposed sub-tasks concurrently, each routed to its brigade."""
-
-        # v15.2: Extract [CHAT HISTORY] from original prompt so each sub-task
-        # retains multi-turn context (prevents amnesia during decomposition).
-        _history_block = ""
-        if "[CURRENT TASK]:" in original_prompt:
-            _history_block = original_prompt.split("[CURRENT TASK]:")[0] + "[CURRENT TASK]:\n"
-
-        shared_observations = {}
-
-        async def _run_one(idx: int, text: str, brigade: str) -> Dict[str, Any]:
-            if status_callback:
-                await status_callback(
-                    "Decomposer", "system",
-                    f"🔀 Подзадача {idx + 1}/{len(sub_tasks)} → {brigade}",
-                )
-            # Prepend chat history to each sub-task
-            enriched_text = _history_block + text if _history_block else text
-            return await self.execute(
-                prompt=enriched_text,
-                brigade=brigade,
-                max_steps=max_steps,
-                status_callback=status_callback,
-                shared_observations=shared_observations,
-            )
-
-        tasks = [
-            _run_one(i, text, brigade)
-            for i, (text, brigade) in enumerate(sub_tasks)
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Merge results into one response
-        merged_parts: list[str] = []
-        all_steps: list[dict] = []
-        all_chains: list[str] = []
-        for i, (text, brigade) in enumerate(sub_tasks):
-            res = results[i]
-            if isinstance(res, Exception):
-                merged_parts.append(f"**Задача {i + 1}** ({brigade}): ⚠️ Ошибка: {res}")
-            else:
-                resp = res.get("final_response", "")
-                merged_parts.append(f"**Задача {i + 1}** ({brigade}):\n{resp}")
-                all_steps.extend(res.get("steps", []))
-                all_chains.extend(res.get("chain_executed", []))
-
-        final = "\n\n---\n\n".join(merged_parts)
-        logger.info(
-            "Multi-task decomposer complete",
-            n_subtasks=len(sub_tasks),
-            n_steps=len(all_steps),
+        return await execute_multi_task(
+            sub_tasks=sub_tasks, original_prompt=original_prompt,
+            max_steps=max_steps, status_callback=status_callback,
+            execute_fn=self.execute,
         )
-        return {
-            "final_response": final,
-            "brigade": "Multi-Task",
-            "chain_executed": all_chains,
-            "steps": all_steps,
-            "status": "completed",
-            "meta": {"decomposed": True, "n_subtasks": len(sub_tasks)},
-        }
 
     async def _force_unload(self, model: str):
         await force_unload(model)
