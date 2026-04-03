@@ -227,9 +227,12 @@ class EmbeddingStore:
         if not self._enabled or not self._collection:
             return []
         try:
+            count = self._collection.count()
+            if count == 0:
+                return []
             results = self._collection.query(
                 query_texts=[query],
-                n_results=min(n_results, self._collection.count() or 1),
+                n_results=min(n_results, count),
             )
             found = []
             for i, doc_id in enumerate(results.get("ids", [[]])[0]):
@@ -254,7 +257,10 @@ class EmbeddingStore:
             all_items = self._collection.get()
             ids_to_delete = []
             for i, meta in enumerate(all_items.get("metadatas", [])):
-                ts = float(meta.get("timestamp", "0"))
+                try:
+                    ts = float(meta.get("timestamp", "0"))
+                except (ValueError, TypeError):
+                    continue
                 if ts < cutoff and ts > 0:
                     ids_to_delete.append(all_items["ids"][i])
             if ids_to_delete:
