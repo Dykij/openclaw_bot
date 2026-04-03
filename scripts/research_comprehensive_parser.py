@@ -3,7 +3,7 @@
 Comprehensive Research Parser — Multi-category parser for OpenClaw bot improvements.
 
 Fetches research papers and articles from multiple academic sources across
-10 improvement categories for OpenClaw bot.
+12 improvement categories for OpenClaw bot.
 
 Categories (3 topics each = 36 total queries):
   1. Архитектура и инфраструктура (Architecture & Infrastructure)
@@ -43,7 +43,7 @@ from typing import Any, Dict, List, Optional, Tuple
 BASE_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "docs", "analysis", "research")
 
 # ============================================================
-# 10 categories × 3 topics = 30 research queries
+# 12 categories × 3 topics = 36 research queries
 # ============================================================
 RESEARCH_CATEGORIES: Dict[str, Dict[str, List[str]]] = {
     "architecture": {
@@ -594,7 +594,7 @@ def generate_improvement_summary(article: ResearchArticle) -> str:
 
 def parse_all_categories(limit_per_source: int = 10, dry_run: bool = False) -> Dict[str, List[ResearchArticle]]:
     """
-    Parse articles from all sources for all 10 categories.
+    Parse articles from all sources for all 12 categories.
     Returns dict: {category_key: [ResearchArticle, ...]}
     """
     all_articles: Dict[str, List[ResearchArticle]] = {k: [] for k in RESEARCH_CATEGORIES}

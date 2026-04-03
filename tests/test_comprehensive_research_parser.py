@@ -35,7 +35,7 @@ from scripts.research_comprehensive_parser import (
 # ============================================================
 
 class TestCategoryStructure:
-    """Tests for the 10-category research structure."""
+    """Tests for the 12-category research structure."""
 
     def test_exactly_12_categories(self):
         assert len(RESEARCH_CATEGORIES) == 12
