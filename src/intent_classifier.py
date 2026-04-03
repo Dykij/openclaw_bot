@@ -9,13 +9,12 @@ v17.0: LRU cache with TTL, improved typing.
 from __future__ import annotations
 
 import re
-import time
-from collections import OrderedDict
 from typing import Any, Dict, Optional
 
 import structlog
 
 from src.llm_gateway import route_llm
+from src.utils.cache import TTLCache
 
 logger = structlog.get_logger("IntentClassifier")
 
@@ -25,40 +24,11 @@ logger = structlog.get_logger("IntentClassifier")
 _INTENT_CACHE_MAX = 500
 _INTENT_CACHE_TTL = 300  # 5 minutes
 
-
-class _LRUCacheTTL:
-    """Simple LRU cache with TTL eviction."""
-
-    def __init__(self, maxsize: int = _INTENT_CACHE_MAX, ttl: float = _INTENT_CACHE_TTL) -> None:
-        self._cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
-        self._maxsize = maxsize
-        self._ttl = ttl
-
-    def get(self, key: str) -> Optional[str]:
-        """Get value if present and not expired."""
-        if key not in self._cache:
-            return None
-        value, ts = self._cache[key]
-        if time.monotonic() - ts > self._ttl:
-            del self._cache[key]
-            return None
-        # Move to end (most recently used)
-        self._cache.move_to_end(key)
-        return value
-
-    def put(self, key: str, value: str) -> None:
-        """Insert or update a value."""
-        self._cache[key] = (value, time.monotonic())
-        self._cache.move_to_end(key)
-        while len(self._cache) > self._maxsize:
-            self._cache.popitem(last=False)
-
-    def __len__(self) -> int:
-        return len(self._cache)
-
+# Alias for backward compatibility with tests
+_LRUCacheTTL = TTLCache
 
 # Module-level singleton cache (replaces gateway._intent_cache)
-_intent_cache = _LRUCacheTTL()
+_intent_cache: TTLCache[str] = TTLCache(maxsize=_INTENT_CACHE_MAX, ttl=_INTENT_CACHE_TTL)
 
 
 # ---------------------------------------------------------------------------

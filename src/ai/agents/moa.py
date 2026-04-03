@@ -19,6 +19,8 @@ from src.ai.agents._shared import (
 
 # Maximum time per proposer before timeout
 _PROPOSER_TIMEOUT_SEC = 30.0
+# Error marker prefix for failed proposers
+_PROPOSER_ERROR_PREFIX = "[Proposer"
 
 
 class MixtureOfAgents:
@@ -69,10 +71,10 @@ class MixtureOfAgents:
                 )
             except asyncio.TimeoutError:
                 logger.warning("moa_proposer_timeout", proposer=idx + 1)
-                return f"[Proposer {idx + 1} timed out]"
+                return f"{_PROPOSER_ERROR_PREFIX} {idx + 1} timed out]"
             except Exception as e:
                 logger.warning("moa_proposer_error", proposer=idx + 1, error=str(e))
-                return f"[Proposer {idx + 1} error: {e}]"
+                return f"{_PROPOSER_ERROR_PREFIX} {idx + 1} error: {e}]"
 
         logger.info("moa_parallel_proposers", count=len(prompts))
         proposals: List[str] = await asyncio.gather(
@@ -80,7 +82,7 @@ class MixtureOfAgents:
         )
 
         # Filter out failed proposals for aggregation
-        valid_proposals = [p for p in proposals if not p.startswith("[Proposer")]
+        valid_proposals = [p for p in proposals if not p.startswith(_PROPOSER_ERROR_PREFIX)]
         if not valid_proposals:
             # All proposers failed — return best effort
             return MoAResult(

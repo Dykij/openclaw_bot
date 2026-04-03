@@ -39,6 +39,8 @@ _COMPLEXITY_COMPLEX = "complex"
 
 # UCB1 exploration coefficient (higher = more exploration)
 _UCB1_C = 1.4
+# Maximum exploration bonus for completely untried model-task pairs
+_UCB1_MAX_EXPLORE_BONUS = 3.0
 
 
 class SmartModelRouter:
@@ -102,7 +104,7 @@ class SmartModelRouter:
 
         if n_model == 0:
             # Never tried this model for this task — maximum exploration bonus
-            return _UCB1_C * 3.0
+            return _UCB1_C * _UCB1_MAX_EXPLORE_BONUS
 
         # UCB1 formula: c * sqrt(ln(N) / n_i)
         return _UCB1_C * math.sqrt(math.log(n_total) / n_model)
