@@ -53,6 +53,9 @@ _token_budget = None
 _metrics_collector = None
 _configured: bool = False
 
+# Thread-safe lock for mutable gateway state
+_state_lock = asyncio.Lock()
+
 # ---------------------------------------------------------------------------
 # HITL (Human-in-the-Loop) Approval Gate  — Phase 8
 # ---------------------------------------------------------------------------
@@ -403,12 +406,23 @@ async def route_llm(
                     used_provider = "openrouter"
 
     if not result and not _force_cloud:
+        logger.info(
+            "LLMGateway: OpenRouter failed, falling back to vLLM",
+            model=selected_model,
+            task_type=task_type,
+            event="provider_fallback",
+        )
         result = await _call_vllm_local(messages, selected_model, max_tokens, temperature)
         if result:
             used_provider = "vllm"
 
     if not result:
-        logger.warning("LLMGateway: all providers failed", model=selected_model, task_type=task_type)
+        logger.warning(
+            "LLMGateway: all providers failed",
+            model=selected_model,
+            task_type=task_type,
+            event="all_providers_exhausted",
+        )
         result = ""
 
     # --- Record metrics ---
@@ -549,13 +563,14 @@ async def _call_openrouter(
 
                     # Capture full error details for debug reporting
                     error_body = await resp.text()
-                    _last_api_error.update({
-                        "status": resp.status,
-                        "model": model,
-                        "endpoint": endpoint,
-                        "body": error_body[:1000],
-                        "attempt": attempt + 1,
-                    })
+                    async with _state_lock:
+                        _last_api_error.update({
+                            "status": resp.status,
+                            "model": model,
+                            "endpoint": endpoint,
+                            "body": error_body[:1000],
+                            "attempt": attempt + 1,
+                        })
                     logger.warning(
                         "OpenRouter HTTP error",
                         status=resp.status,
@@ -577,13 +592,14 @@ async def _call_openrouter(
             raise
         except Exception as e:
             _record_failure(model)
-            _last_api_error.update({
-                "status": 0,
-                "model": model,
-                "endpoint": endpoint,
-                "body": str(e)[:1000],
-                "attempt": attempt + 1,
-            })
+            async with _state_lock:
+                _last_api_error.update({
+                    "status": 0,
+                    "model": model,
+                    "endpoint": endpoint,
+                    "body": str(e)[:1000],
+                    "attempt": attempt + 1,
+                })
             if attempt < retries - 1:
                 logger.warning("OpenRouter error", error=str(e), attempt=attempt)
                 await asyncio.sleep(2 ** attempt)

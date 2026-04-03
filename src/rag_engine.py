@@ -100,10 +100,12 @@ class RAGEngine:
         persist_dir: str = "data/rag_db",
         collection_name: str = "openclaw_docs",
         index_dirs: Optional[List[str]] = None,
+        embedding_model: str = "default",
     ):
         self._persist_dir = persist_dir
         self._collection_name = collection_name
         self._index_dirs = index_dirs or []
+        self._embedding_model = embedding_model
         self._collection = None
         self._client = None
         self._file_hashes: Dict[str, str] = {}
@@ -120,10 +122,33 @@ class RAGEngine:
                 path=self._persist_dir,
                 settings=Settings(anonymized_telemetry=False),
             )
-            self._collection = self._client.get_or_create_collection(
-                name=self._collection_name,
-                metadata={"hnsw:space": "cosine"},
-            )
+
+            # Use custom embedding model if configured
+            embedding_fn = None
+            if self._embedding_model != "default":
+                try:
+                    from chromadb.utils.embedding_functions import (
+                        SentenceTransformerEmbeddingFunction,
+                    )
+                    embedding_fn = SentenceTransformerEmbeddingFunction(
+                        model_name=self._embedding_model
+                    )
+                    logger.info("Using custom embedding model", model=self._embedding_model)
+                except Exception as emb_err:
+                    logger.warning(
+                        "Custom embedding model failed, using default",
+                        model=self._embedding_model,
+                        error=str(emb_err),
+                    )
+
+            create_kwargs: Dict[str, Any] = {
+                "name": self._collection_name,
+                "metadata": {"hnsw:space": "cosine"},
+            }
+            if embedding_fn is not None:
+                create_kwargs["embedding_function"] = embedding_fn
+
+            self._collection = self._client.get_or_create_collection(**create_kwargs)
             self._initialized = True
             logger.info(
                 "RAG engine initialized",
@@ -331,3 +356,26 @@ class RAGEngine:
             "indexed_files": len(self._file_hashes),
             "persist_dir": self._persist_dir,
         }
+
+    # ------------------------------------------------------------------
+    # Async wrappers
+    # ------------------------------------------------------------------
+
+    async def aquery(
+        self,
+        text: str,
+        top_k: int = 5,
+        min_relevance: float = 0.3,
+    ) -> List[Dict[str, Any]]:
+        """Async wrapper for query — runs blocking ChromaDB call in executor."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: self.query(text, top_k=top_k, min_relevance=min_relevance)
+        )
+
+    async def aindex_directories(self, dirs: Optional[List[str]] = None) -> Dict[str, int]:
+        """Async wrapper for index_directories — runs in executor."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self.index_directories(dirs))

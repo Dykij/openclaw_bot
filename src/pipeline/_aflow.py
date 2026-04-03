@@ -384,7 +384,22 @@ class AFlowEngine:
             return None
 
         # Validate roles — only keep roles that exist
-        raw_validated = [r for r in parsed if isinstance(r, str) and r in available_roles]
+        raw_validated = []
+        for r in parsed:
+            if not isinstance(r, str):
+                continue
+            if r in available_roles:
+                raw_validated.append(r)
+            else:
+                logger.warning(
+                    "AFlow: invalid role in LLM-generated chain, skipping",
+                    role=r,
+                    available=available_roles,
+                )
+
+        if not raw_validated:
+            logger.warning("AFlow: LLM chain had no valid roles, falling back to static")
+            return None
 
         # Stage 3 (v15.5): Запрет повторного цикла Researcher -> Analyst
         # и ограничение Research-цепочки максимум 3 шагами

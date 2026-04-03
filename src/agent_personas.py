@@ -9,6 +9,7 @@ with fixes: YAML parsed via pyyaml, proper singleton pattern.
 """
 
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -50,6 +51,8 @@ class AgentPersonaManager:
             return
         self._agents_dir = agents_dir or AGENTS_DIR
         self._personas: Dict[str, AgentPersona] = {}
+        self._file_mtimes: Dict[str, float] = {}
+        self._last_loaded_time: float = 0.0
         self._load_all()
         self._loaded = True
 
@@ -67,8 +70,44 @@ class AgentPersonaManager:
                 persona = self._parse_persona(md_file, category)
                 if persona:
                     self._personas[persona.slug] = persona
+                    try:
+                        self._file_mtimes[str(md_file)] = md_file.stat().st_mtime
+                    except OSError:
+                        pass
 
+        self._last_loaded_time = time.time()
         logger.info(f"Loaded {len(self._personas)} agent personas from {self._agents_dir}")
+
+    def reload_if_changed(self) -> bool:
+        """Check persona file mtimes and reload if any changed. Returns True if reloaded."""
+        if not self._agents_dir.is_dir():
+            return False
+
+        for fpath, old_mtime in self._file_mtimes.items():
+            try:
+                current_mtime = Path(fpath).stat().st_mtime
+                if current_mtime > old_mtime:
+                    logger.info("Persona file changed, reloading", file=fpath)
+                    self._personas.clear()
+                    self._file_mtimes.clear()
+                    self._load_all()
+                    return True
+            except OSError:
+                continue
+
+        # Check for new files
+        for category_dir in self._agents_dir.iterdir():
+            if not category_dir.is_dir() or category_dir.name.startswith("."):
+                continue
+            for md_file in category_dir.glob("*.md"):
+                if str(md_file) not in self._file_mtimes:
+                    logger.info("New persona file detected, reloading", file=str(md_file))
+                    self._personas.clear()
+                    self._file_mtimes.clear()
+                    self._load_all()
+                    return True
+
+        return False
 
     def _parse_persona(self, path: Path, category: str) -> Optional[AgentPersona]:
         """Parse a persona markdown file with YAML frontmatter."""
@@ -112,11 +151,13 @@ class AgentPersonaManager:
         )
 
     def get(self, slug: str) -> Optional[AgentPersona]:
-        """Get persona by slug."""
+        """Get persona by slug. Checks for file changes before returning."""
+        self.reload_if_changed()
         return self._personas.get(slug)
 
     def list_all(self) -> List[AgentPersona]:
         """Return all loaded personas."""
+        self.reload_if_changed()
         return list(self._personas.values())
 
     def list_by_category(self, category: str) -> List[AgentPersona]:

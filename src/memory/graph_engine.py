@@ -234,6 +234,7 @@ class DependencyGraphEngine:
         """Return related file paths to include in RAG context."""
         rel = self._normalize(file_path)
         related: Set[str] = set()
+        visited: Set[str] = {rel}
 
         # Forward dependencies (what this file imports)
         related.update(self._adjacency.get(rel, set()))
@@ -241,9 +242,13 @@ class DependencyGraphEngine:
         # Reverse dependencies (what imports this file)
         related.update(self._reverse_adj.get(rel, set()))
 
-        # Transitive (depth > 1)
+        # Transitive (depth > 1) with cycle detection
         if depth > 1:
             for neighbor in list(related):
+                if neighbor in visited:
+                    logger.debug("graph_cycle_detected", node=neighbor, source=rel)
+                    continue
+                visited.add(neighbor)
                 related.update(self._adjacency.get(neighbor, set()))
                 related.update(self._reverse_adj.get(neighbor, set()))
 

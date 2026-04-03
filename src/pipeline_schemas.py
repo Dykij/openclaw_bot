@@ -276,3 +276,28 @@ TOOL_ELIGIBLE_ROLES = (
     "Planner", "Foreman",
     "Data_Analyst", "Risk_Analyst",
 )
+
+
+# ---------------------------------------------------------------------------
+# Config validation
+# ---------------------------------------------------------------------------
+
+class OpenClawConfigSchema(BaseModel):
+    """Validation schema for openclaw_config.json."""
+    inference_engine: str = "openrouter"
+    vllm_url: str = "http://localhost:8000"
+    openrouter: dict = Field(default_factory=dict)
+    brigades: dict = Field(default_factory=dict)
+    routing: dict = Field(default_factory=dict)
+
+    class Config:
+        extra = "allow"
+
+
+def validate_config(config: dict) -> tuple[bool, str]:
+    """Validate config dict. Returns (is_valid, error_message)."""
+    try:
+        OpenClawConfigSchema(**config)
+        return True, ""
+    except Exception as e:
+        return False, str(e)

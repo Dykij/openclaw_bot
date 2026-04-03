@@ -37,6 +37,9 @@ _rate_limit_state = {
     "reset_at": 0.0,
 }
 
+# Thread-safe lock for mutable circuit breaker / rate limit state
+_state_lock = asyncio.Lock()
+
 
 def _get_cb(model: str) -> Dict[str, Any]:
     """Get or create per-model circuit breaker."""
@@ -49,26 +52,57 @@ def _get_cb(model: str) -> Dict[str, Any]:
     return _model_circuit_breakers[model]
 
 
-def _update_rate_limits(headers: Dict[str, str]) -> None:
+async def _update_rate_limits(headers: Dict[str, str]) -> None:
     """Update rate limit state from OpenRouter response headers."""
-    try:
-        if "x-ratelimit-remaining-requests" in headers:
-            _rate_limit_state["requests_remaining"] = int(headers["x-ratelimit-remaining-requests"])
-        if "x-ratelimit-remaining-tokens" in headers:
-            _rate_limit_state["tokens_remaining"] = int(headers["x-ratelimit-remaining-tokens"])
-    except (ValueError, KeyError):
-        pass
+    async with _state_lock:
+        try:
+            if "x-ratelimit-remaining-requests" in headers:
+                _rate_limit_state["requests_remaining"] = int(
+                    headers["x-ratelimit-remaining-requests"]
+                )
+            if "x-ratelimit-remaining-tokens" in headers:
+                _rate_limit_state["tokens_remaining"] = int(
+                    headers["x-ratelimit-remaining-tokens"]
+                )
+        except (ValueError, KeyError):
+            pass
+
+
+async def _is_circuit_open_async(model: str) -> bool:
+    """Async check if circuit breaker is open for a specific model."""
+    async with _state_lock:
+        cb = _get_cb(model)
+        if cb["failures"] >= _CB_THRESHOLD:
+            if time.time() < cb["open_until"]:
+                return True
+            cb["failures"] = 0
+        return False
 
 
 def _is_circuit_open(model: str) -> bool:
-    """Check if circuit breaker is open for a specific model."""
+    """Sync check if circuit breaker is open (backward compat)."""
     cb = _get_cb(model)
     if cb["failures"] >= _CB_THRESHOLD:
         if time.time() < cb["open_until"]:
             return True
-        # Cooldown expired — allow a probe
         cb["failures"] = 0
     return False
+
+
+async def _record_failure_async(model: str) -> None:
+    """Record a failure for a specific model's circuit breaker (async-safe)."""
+    async with _state_lock:
+        cb = _get_cb(model)
+        cb["failures"] += 1
+        cb["last_failure"] = time.time()
+        if cb["failures"] >= _CB_THRESHOLD:
+            cb["open_until"] = time.time() + _CB_COOLDOWN_SEC
+            logger.warning(
+                "Circuit breaker OPEN for model",
+                model=model,
+                cooldown_sec=_CB_COOLDOWN_SEC,
+                event="circuit_breaker_open",
+            )
 
 
 def _record_failure(model: str) -> None:
@@ -83,6 +117,20 @@ def _record_failure(model: str) -> None:
             model=model,
             cooldown_sec=_CB_COOLDOWN_SEC,
         )
+
+
+async def _record_success_async(model: str) -> None:
+    """Record a success — reset circuit breaker (async-safe)."""
+    async with _state_lock:
+        cb = _get_cb(model)
+        if cb["failures"] > 0:
+            logger.info(
+                "Circuit breaker reset after success",
+                model=model,
+                previous_failures=cb["failures"],
+                event="circuit_breaker_reset",
+            )
+        cb["failures"] = 0
 
 
 def _record_success(model: str) -> None:
@@ -189,7 +237,7 @@ async def call_openrouter(
                         json=payload,
                         headers=headers,
                     ) as resp:
-                        _update_rate_limits(dict(resp.headers))
+                        await _update_rate_limits(dict(resp.headers))
 
                         if resp.status == 200:
                             _record_success(current_model)

@@ -20,9 +20,28 @@ class ReActReasoner:
 
     _FINISH_ACTION = "Finish"
 
-    def __init__(self, vllm_url: str = "", model: str = ""):
+    def __init__(self, vllm_url: str = "", model: str = "", tool_registry: Optional[Dict[str, Any]] = None):
         self.vllm_url = vllm_url.rstrip("/") if vllm_url else ""
         self.model = model
+        self._tool_registry = tool_registry or {}
+
+    async def _execute_tool(self, action: str, action_input: str) -> str:
+        """Attempt to execute a tool from the registry. Returns observation string."""
+        tool = self._tool_registry.get(action)
+        if tool is None:
+            return f"[Tool '{action}' not found in registry. Available: {list(self._tool_registry.keys())}]"
+        try:
+            if callable(tool):
+                import asyncio
+                if asyncio.iscoroutinefunction(tool):
+                    result = await tool(action_input)
+                else:
+                    result = tool(action_input)
+                return str(result) if result is not None else "[Tool returned no output]"
+            return f"[Tool '{action}' is not callable]"
+        except Exception as e:
+            logger.warning("react_tool_error", action=action, error=str(e))
+            return f"[Tool '{action}' error: {e}]"
 
     async def reason(
         self,
@@ -66,7 +85,12 @@ class ReActReasoner:
                     elapsed_sec=time.monotonic() - start,
                 )
 
-            observation = f"[Tool '{action}' called with input: {action_input}]"
+            # Execute tool if available in registry, otherwise provide stub observation
+            if self._tool_registry:
+                observation = await self._execute_tool(action, action_input)
+            else:
+                observation = f"[Tool '{action}' called with input: {action_input}]"
+
             history.append(
                 ReActStep(
                     step=step_idx,
