@@ -85,3 +85,38 @@ class ToolLearningTracker:
             return None
         best = max(candidates, key=lambda s: s.success_rate)
         return best.tool_name if best.success_rate > self._RETRY_THRESHOLD else None
+
+    # -- Persistence --
+
+    def save_state(self, path: str = "data/tool_learning_state.json") -> None:
+        """Persist tool stats and task-tool map to JSON."""
+        import os, json
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        state = {
+            "stats": {name: s.to_dict() for name, s in self._stats.items()},
+            "task_tool_map": {k: dict(v) for k, v in self._task_tool_map.items()},
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            logger.info("tool_learning_saved", tools=len(self._stats), path=path)
+        except OSError as exc:
+            logger.warning("tool_learning_save_failed", error=str(exc))
+
+    def restore_state(self, path: str = "data/tool_learning_state.json") -> bool:
+        """Restore tool stats from JSON. Returns True if restored."""
+        import os, json
+        if not os.path.exists(path):
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            for name, d in state.get("stats", {}).items():
+                self._stats[name] = ToolStats(**{k: v for k, v in d.items() if k in ToolStats.__dataclass_fields__})
+            for task, tools in state.get("task_tool_map", {}).items():
+                self._task_tool_map[task] = defaultdict(int, tools)
+            logger.info("tool_learning_restored", tools=len(self._stats), path=path)
+            return True
+        except (json.JSONDecodeError, OSError, KeyError) as exc:
+            logger.warning("tool_learning_restore_failed", error=str(exc))
+            return False

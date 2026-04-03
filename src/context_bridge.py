@@ -150,6 +150,133 @@ class FactStore:
 
 
 # ---------------------------------------------------------------------------
+# Layer 3 — Embedding Store (ChromaDB semantic memory)
+# ---------------------------------------------------------------------------
+
+class EmbeddingStore:
+    """ChromaDB-backed semantic memory for long-term context retrieval.
+
+    Embeds pipeline snapshot summaries and enables semantic search
+    across historical context transfers.
+
+    Graceful degradation: if ChromaDB is unavailable, Layer 3 is disabled
+    and Layer 1+2 continue to function normally.
+    """
+
+    def __init__(self, persist_dir: str = "data/context_embeddings", collection_name: str = "context_bridge"):
+        self._enabled = False
+        self._collection = None
+        self._persist_dir = persist_dir
+        self._collection_name = collection_name
+        self._init_chromadb()
+
+    def _init_chromadb(self) -> None:
+        """Initialize ChromaDB with graceful degradation."""
+        try:
+            import chromadb
+            Path(self._persist_dir).mkdir(parents=True, exist_ok=True)
+            client = chromadb.PersistentClient(path=self._persist_dir)
+            self._collection = client.get_or_create_collection(
+                name=self._collection_name,
+                metadata={"hnsw:space": "cosine"},
+            )
+            self._enabled = True
+            logger.info("embedding_store_initialized", persist_dir=self._persist_dir)
+        except ImportError:
+            logger.info("chromadb_not_installed", msg="Layer 3 disabled — install chromadb for semantic search")
+        except Exception as exc:
+            logger.warning("embedding_store_init_failed", error=str(exc))
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def store_embedding(self, snapshot: PipelineSnapshot) -> None:
+        """Embed and store a pipeline snapshot summary."""
+        if not self._enabled or not self._collection:
+            return
+        try:
+            # Build text to embed from snapshot content
+            text_parts = [
+                f"Brigade: {snapshot.brigade}",
+                f"Models: {snapshot.source_model} → {snapshot.target_model}",
+            ]
+            for step in snapshot.step_summaries:
+                text_parts.append(f"{step.get('role', '')}: {step.get('summary', '')}")
+            if snapshot.key_facts:
+                text_parts.extend(snapshot.key_facts)
+            document = "\n".join(text_parts)
+
+            self._collection.upsert(
+                ids=[snapshot.pipeline_id],
+                documents=[document],
+                metadatas=[{
+                    "brigade": snapshot.brigade,
+                    "source_model": snapshot.source_model,
+                    "target_model": snapshot.target_model,
+                    "timestamp": str(snapshot.timestamp),
+                    "chain_position": str(snapshot.chain_position),
+                }],
+            )
+            logger.debug("embedding_stored", pipeline_id=snapshot.pipeline_id)
+        except Exception as exc:
+            logger.warning("embedding_store_failed", error=str(exc), pipeline_id=snapshot.pipeline_id)
+
+    def search_similar(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        """Semantic search across stored context embeddings."""
+        if not self._enabled or not self._collection:
+            return []
+        try:
+            results = self._collection.query(
+                query_texts=[query],
+                n_results=min(n_results, self._collection.count() or 1),
+            )
+            found = []
+            for i, doc_id in enumerate(results.get("ids", [[]])[0]):
+                found.append({
+                    "pipeline_id": doc_id,
+                    "document": (results.get("documents", [[]])[0] or [""])[i] if results.get("documents") else "",
+                    "metadata": (results.get("metadatas", [[]])[0] or [{}])[i] if results.get("metadatas") else {},
+                    "distance": (results.get("distances", [[]])[0] or [0.0])[i] if results.get("distances") else 0.0,
+                })
+            return found
+        except Exception as exc:
+            logger.warning("embedding_search_failed", error=str(exc))
+            return []
+
+    def prune_old(self, max_age_hours: float = 24.0) -> int:
+        """Remove embeddings older than max_age_hours."""
+        if not self._enabled or not self._collection:
+            return 0
+        try:
+            cutoff = time.time() - (max_age_hours * 3600)
+            # Get all items and filter by timestamp
+            all_items = self._collection.get()
+            ids_to_delete = []
+            for i, meta in enumerate(all_items.get("metadatas", [])):
+                ts = float(meta.get("timestamp", "0"))
+                if ts < cutoff and ts > 0:
+                    ids_to_delete.append(all_items["ids"][i])
+            if ids_to_delete:
+                self._collection.delete(ids=ids_to_delete)
+                logger.info("embeddings_pruned", count=len(ids_to_delete), max_age_hours=max_age_hours)
+            return len(ids_to_delete)
+        except Exception as exc:
+            logger.warning("embedding_prune_failed", error=str(exc))
+            return 0
+
+    def health_check(self) -> Dict[str, Any]:
+        """Return health status of the embedding store."""
+        if not self._enabled:
+            return {"enabled": False, "reason": "chromadb not available"}
+        try:
+            count = self._collection.count() if self._collection else 0
+            return {"enabled": True, "count": count, "persist_dir": self._persist_dir}
+        except Exception as exc:
+            return {"enabled": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Main Context Bridge
 # ---------------------------------------------------------------------------
 
@@ -162,6 +289,9 @@ class ContextBridge:
         self._enabled = bridge_cfg.get("enabled", True)
         self._summary_max_tokens = bridge_cfg.get("summary_max_tokens", 500)
         self._fact_store = FactStore(db_path)
+        # Layer 3 — Embedding store
+        embed_dir = bridge_cfg.get("embedding_dir", str(Path(_DEFAULT_DB_PATH).parent / "context_embeddings"))
+        self._embedding_store = EmbeddingStore(persist_dir=embed_dir)
         logger.info(
             "ContextBridge initialized",
             enabled=self._enabled,
@@ -223,6 +353,9 @@ class ContextBridge:
                 step["summary"],
             )
 
+        # Layer 3: Embed for semantic search
+        self._embedding_store.store_embedding(snapshot)
+
     def restore_after_swap(self, pipeline_id: str) -> Optional[str]:
         """Restore context as a formatted string after new model loads."""
         snapshot = self._fact_store.load_snapshot(pipeline_id)
@@ -231,6 +364,11 @@ class ContextBridge:
             return None
 
         facts = self._fact_store.get_facts(pipeline_id)
+
+        # Layer 3: Semantic search for related context
+        semantic_results = self._embedding_store.search_similar(
+            f"{snapshot.brigade} {snapshot.source_model}", n_results=3
+        )
 
         # Build context briefing for the new model
         lines = [
@@ -253,7 +391,23 @@ class ContextBridge:
             for f in facts[:10]:
                 lines.append(f"  - [{f['role']}] {f['content'][:150]}")
 
+        if semantic_results:
+            lines.append("")
+            lines.append("Related context (semantic):")
+            for sr in semantic_results[:3]:
+                if sr["pipeline_id"] != pipeline_id:  # Skip self
+                    doc_preview = sr.get("document", "")[:200]
+                    lines.append(f"  - [{sr['pipeline_id'][:12]}] {doc_preview}")
+
         return "\n".join(lines)
 
     def close(self) -> None:
         self._fact_store.close()
+
+    def health_check(self) -> Dict[str, Any]:
+        """Return health status of all layers."""
+        return {
+            "enabled": self._enabled,
+            "layer2_fact_store": "ok",
+            "layer3_embeddings": self._embedding_store.health_check(),
+        }

@@ -59,7 +59,6 @@ from src.ai.agents.constitutional import ConstitutionalChecker
 from src.tools.dynamic_sandbox import DynamicSandbox
 
 from src.pipeline._state import init_smart_router, init_supermemory, recall_memory_context
-from src.pipeline._reflexion import reflexion_fallback
 from src.pipeline._tools_handler import handle_planner_handoff
 
 # v11.7 SOTA modules
@@ -248,7 +247,29 @@ class PipelineExecutor:
         return await recall_memory_context(self, prompt)
 
     async def _reflexion_fallback(self, prompt: str, error_response: str) -> Optional[str]:
-        return await reflexion_fallback(self.vllm_url, self.config, prompt, error_response)
+        """Reflexion fallback — self-reflection when pipeline produces an error."""
+        try:
+            from src.ai.agents.reflexion import ReflexionAgent
+
+            agent = ReflexionAgent(
+                vllm_url=self.vllm_url,
+                model=self.config.get("system", {}).get("model_router", {}).get(
+                    "general", "meta-llama/llama-3.3-70b-instruct:free"
+                ),
+            )
+            task = (
+                f"The pipeline produced an error or low-quality response for this task:\n"
+                f"{prompt[:500]}\n\n"
+                f"Error/response:\n{error_response[:500]}\n\n"
+                f"Reflect on what went wrong and produce a corrected answer."
+            )
+            result = await agent.solve_with_reflection(task, max_attempts=2)
+            if result and result.final_answer:
+                logger.info("Reflexion fallback succeeded", attempts=result.attempts_used)
+                return result.final_answer
+        except Exception as e:
+            logger.warning("Reflexion fallback failed", error=str(e))
+        return None
 
     async def _quick_inference(self, prompt: str) -> str:
         """v16.4: Fast LLM inference for autonomous reflection (Self-Healing)."""

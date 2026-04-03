@@ -494,6 +494,50 @@ class TieredMemoryManager:
                     source="archive",
                 )
 
+    # -- Persistence (hot + warm tiers) --
+
+    def save_state(self, path: str = "data/memory_state.json") -> None:
+        """Persist hot and warm tiers to JSON file."""
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        state = {
+            "hot": {k: v.to_dict() for k, v in self._hot.items()},
+            "warm": {k: v.to_dict() for k, v in self._warm.items()},
+            "scorer_rewards": dict(self._scorer._reward_history),
+            "saved_at": time.time(),
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            logger.info("memory_state_saved", hot=len(self._hot), warm=len(self._warm), path=path)
+        except OSError as exc:
+            logger.warning("memory_state_save_failed", error=str(exc))
+
+    def restore_state(self, path: str = "data/memory_state.json") -> bool:
+        """Restore hot and warm tiers from JSON file. Returns True if restored."""
+        if not os.path.exists(path):
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            for k, d in state.get("hot", {}).items():
+                self._hot[k] = MemoryItem.from_dict(d)
+            for k, d in state.get("warm", {}).items():
+                self._warm[k] = MemoryItem.from_dict(d)
+            rewards = state.get("scorer_rewards", {})
+            for k, v in rewards.items():
+                if isinstance(v, (list, tuple)) and len(v) == 2:
+                    self._scorer._reward_history[k] = (float(v[0]), int(v[1]))
+            logger.info(
+                "memory_state_restored",
+                hot=len(self._hot),
+                warm=len(self._warm),
+                path=path,
+            )
+            return True
+        except (json.JSONDecodeError, OSError, KeyError) as exc:
+            logger.warning("memory_state_restore_failed", error=str(exc))
+            return False
+
 
 # ---------------------------------------------------------------------------
 # EpisodicMemory (Memento: arXiv:2508.16153)
