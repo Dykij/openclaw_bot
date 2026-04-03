@@ -42,31 +42,35 @@ _JINA_BASE = "https://r.jina.ai/"
 
 
 # ---------------------------------------------------------------------------
-# TTL Cache for search/fetch results
+# TTL Cache for search/fetch results — use shared utility
 # ---------------------------------------------------------------------------
-class _TTLCache:
-    """Simple TTL cache with max size."""
+try:
+    from src.utils.cache import TTLCache as _TTLCache
+except ImportError:
+    # Fallback for standalone MCP server execution
+    class _TTLCache:  # type: ignore[no-redef]
+        """Simple TTL cache with max size (fallback for standalone mode)."""
 
-    def __init__(self, maxsize: int = 200, ttl: float = 600.0) -> None:
-        self._data: OrderedDict[str, tuple[Any, float]] = OrderedDict()
-        self._maxsize = maxsize
-        self._ttl = ttl
+        def __init__(self, maxsize: int = 200, ttl: float = 600.0) -> None:
+            self._data: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+            self._maxsize = maxsize
+            self._ttl = ttl
 
-    def get(self, key: str) -> Optional[Any]:
-        if key not in self._data:
-            return None
-        value, ts = self._data[key]
-        if time.monotonic() - ts > self._ttl:
-            del self._data[key]
-            return None
-        self._data.move_to_end(key)
-        return value
+        def get(self, key: str) -> Optional[Any]:
+            if key not in self._data:
+                return None
+            value, ts = self._data[key]
+            if time.monotonic() - ts > self._ttl:
+                del self._data[key]
+                return None
+            self._data.move_to_end(key)
+            return value
 
-    def put(self, key: str, value: Any) -> None:
-        self._data[key] = (value, time.monotonic())
-        self._data.move_to_end(key)
-        while len(self._data) > self._maxsize:
-            self._data.popitem(last=False)
+        def put(self, key: str, value: Any) -> None:
+            self._data[key] = (value, time.monotonic())
+            self._data.move_to_end(key)
+            while len(self._data) > self._maxsize:
+                self._data.popitem(last=False)
 
 
 # Search cache: 10-min TTL, max 200 entries

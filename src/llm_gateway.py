@@ -495,9 +495,10 @@ async def _call_openrouter(
     base_url = _openrouter_config.get("base_url", "https://openrouter.ai/api/v1").rstrip("/")
     endpoint = f"{base_url}/chat/completions"
 
-    if not api_key or _is_circuit_open(model):
-        if _is_circuit_open(model):
-            logger.debug("Circuit breaker open, skipping", model=model)
+    if not api_key:
+        return ""
+    if _is_circuit_open(model):
+        logger.debug("Circuit breaker open, skipping", model=model)
         return ""
 
     # Free-tier enforcement: reject models without :free suffix to prevent 402
