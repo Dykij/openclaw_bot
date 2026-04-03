@@ -5,7 +5,7 @@ Comprehensive Research Parser — Multi-category parser for OpenClaw bot improve
 Fetches research papers and articles from multiple academic sources across
 10 improvement categories for OpenClaw bot.
 
-Categories (3 topics each = 30 total queries):
+Categories (3 topics each = 36 total queries):
   1. Архитектура и инфраструктура (Architecture & Infrastructure)
   2. Интеллектуальные модули (Intelligent Modules)
   3. Системы памяти (Memory Systems)
@@ -16,6 +16,8 @@ Categories (3 topics each = 30 total queries):
   8. Тестирование (Testing & Evaluation)
   9. Обучение моделей (Model Training)
   10. OpenClaw общее (General Agent Systems)
+  11. Интеграция с Obsidian (Obsidian Integration)
+  12. Улучшение моделей OpenRouter (OpenRouter Model Optimization)
 
 Sources: Semantic Scholar, arXiv, Papers With Code, HuggingFace Papers
 
@@ -134,6 +136,24 @@ RESEARCH_CATEGORIES: Dict[str, Dict[str, List[str]]] = {
             "self-improving AI agent continuous learning",
         ],
     },
+    "obsidian_integration": {
+        "name_ru": "Интеграция с Obsidian",
+        "name_en": "Obsidian Integration & Knowledge Management",
+        "topics": [
+            "knowledge management personal knowledge base AI",
+            "note-taking retrieval augmented generation LLM",
+            "Zettelkasten knowledge graph linked notes AI",
+        ],
+    },
+    "openrouter_models": {
+        "name_ru": "Улучшение моделей OpenRouter",
+        "name_en": "OpenRouter Model Optimization",
+        "topics": [
+            "LLM model routing selection optimization API",
+            "multi-model ensemble routing inference cost",
+            "model evaluation comparison benchmark selection",
+        ],
+    },
 }
 
 # GitHub repositories relevant to OpenClaw training
@@ -162,6 +182,14 @@ GITHUB_REPOS: List[Dict[str, str]] = [
     {"name": "TideDra/lmm-r1", "stars": "845", "desc": "Extend OpenRLHF for multimodal RL training (DeepSeek-R1)", "category": "model_training"},
     # Inference Optimization Labs
     {"name": "ss4983/llm-inference-optimization-lab", "stars": "0", "desc": "Benchmark vLLM vs TGI: quantization, prefix caching, speculative decoding", "category": "performance"},
+    # Obsidian + AI Integration
+    {"name": "khoj-ai/khoj", "stars": "33.8k", "desc": "AI second brain: self-hostable agents, deep research, RAG with Obsidian", "category": "obsidian_integration"},
+    {"name": "nhaouari/obsidian-textgenerator-plugin", "stars": "1.9k", "desc": "Text generation in Obsidian via OpenAI, Anthropic, local models", "category": "obsidian_integration"},
+    {"name": "your-papa/obsidian-Smart2Brain", "stars": "1k", "desc": "Privacy-focused AI assistant for Obsidian with RAG + embeddings", "category": "obsidian_integration"},
+    {"name": "eugeneyan/obsidian-copilot", "stars": "559", "desc": "AI copilot for writing and thinking in Obsidian with RAG", "category": "obsidian_integration"},
+    {"name": "qgrail/obsidian-ai-assistant", "stars": "366", "desc": "AI Assistant Plugin for Obsidian (multi-provider)", "category": "obsidian_integration"},
+    {"name": "Roasbeef/obsidian-claude-code", "stars": "196", "desc": "Claude AI assistant embedded directly in Obsidian vault", "category": "obsidian_integration"},
+    {"name": "edonyzpc/personal-assistant", "stars": "141", "desc": "AI agents for automatic Obsidian vault management", "category": "obsidian_integration"},
 ]
 
 
@@ -474,6 +502,18 @@ CATEGORY_KEYWORDS: Dict[str, Dict[str, int]] = {
         "continuous learning": 3, "task planning": 2, "collaboration": 2,
         "agent architecture": 2, "goal-directed": 2, "emergent behavior": 1,
     },
+    "obsidian_integration": {
+        "knowledge management": 3, "personal knowledge": 3, "obsidian": 3,
+        "zettelkasten": 3, "note-taking": 3, "knowledge graph": 3,
+        "linked notes": 2, "retrieval": 2, "vault": 2, "markdown": 2,
+        "second brain": 1, "pkm": 1,
+    },
+    "openrouter_models": {
+        "model routing": 3, "model selection": 3, "api routing": 3,
+        "ensemble": 3, "cost optimization": 3, "model evaluation": 3,
+        "benchmark": 2, "inference cost": 2, "model comparison": 2,
+        "multi-model": 2, "provider": 1, "fallback": 1,
+    },
 }
 
 UNIVERSAL_KEYWORDS: Dict[str, int] = {
@@ -530,6 +570,8 @@ IMPROVEMENT_TEMPLATES: Dict[str, str] = {
     "testing": "Улучшение тестирования: {concept} для повышения надёжности и качества бота.",
     "model_training": "Улучшение обучения: {concept} для повышения качества дообучения моделей.",
     "general_agents": "Общее улучшение: {concept} для развития автономных возможностей OpenClaw.",
+    "obsidian_integration": "Интеграция Obsidian: {concept} для улучшения управления знаниями и самообучения.",
+    "openrouter_models": "Оптимизация моделей: {concept} для улучшения выбора и качества моделей OpenRouter.",
 }
 
 

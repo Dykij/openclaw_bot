@@ -1,7 +1,8 @@
 # 🗺️ OpenClaw Bot — Roadmaps2: Комплексный план улучшений
 
 > Дата создания: 2026-04-03
-> Основан на: анализе 18 GitHub-репозиториев + 30 исследовательских запросов по 10 категориям
+> Обновлено: 2026-04-03 (добавлены Obsidian + OpenRouter категории)
+> Основан на: анализе 25 GitHub-репозиториев + 36 исследовательских запросов по 12 категориям
 > Источники: Semantic Scholar, arXiv, Papers With Code, HuggingFace Papers, GitHub
 
 ---
@@ -19,8 +20,10 @@
 9. [Категория 8: Тестирование и оценка](#8--тестирование-и-оценка)
 10. [Категория 9: Обучение моделей](#9--обучение-моделей)
 11. [Категория 10: OpenClaw общее (Агентные системы)](#10--openclaw-общее-агентные-системы)
-12. [Сводная таблица улучшений](#-сводная-таблица-улучшений)
-13. [Приоритеты реализации](#-приоритеты-реализации)
+12. [Категория 11: Интеграция с Obsidian](#11--интеграция-с-obsidian)
+13. [Категория 12: Улучшение моделей OpenRouter](#12--улучшение-моделей-openrouter)
+14. [Сводная таблица улучшений](#-сводная-таблица-улучшений)
+15. [Приоритеты реализации](#-приоритеты-реализации)
 
 ---
 
@@ -63,6 +66,18 @@
 | [0xZee/DeepSeek-R1-FineTuning](https://github.com/0xZee/DeepSeek-R1-FineTuning) | 18 | DeepSeek-R1 fine-tuning with RL + Quantization | Рецепты для дообучения DeepSeek-R1 моделей |
 | [Kashif-E/Delve](https://github.com/Kashif-E/Delve) | 8 | Deep research agent with multi-agent pipeline + RAG | Паттерны multi-agent deep research |
 | [ss4983/llm-inference-optimization-lab](https://github.com/ss4983/llm-inference-optimization-lab) | 0 | Benchmark vLLM vs TGI: quantization, prefix caching, speculative decoding | Бенчмарки для сравнения оптимизаций инференса |
+
+### Obsidian + AI Integration
+
+| Репозиторий | ⭐ Stars | Описание | Применение для OpenClaw |
+|------------|---------|----------|----------------------|
+| [khoj-ai/khoj](https://github.com/khoj-ai/khoj) | 33.8k | AI second brain: self-hostable agents, deep research, RAG с Obsidian | Эталон AI second brain с интеграцией Obsidian — паттерны RAG + агент поверх vault |
+| [nhaouari/obsidian-textgenerator-plugin](https://github.com/nhaouari/obsidian-textgenerator-plugin) | 1.9k | Text generation в Obsidian через OpenAI, Anthropic, локальные модели | Паттерны multi-provider генерации текста в vault |
+| [your-papa/obsidian-Smart2Brain](https://github.com/your-papa/obsidian-Smart2Brain) | 1k | Privacy-focused AI assistant для Obsidian с RAG + embeddings | RAG embeddings поверх Obsidian vault — локальная приватная обработка |
+| [eugeneyan/obsidian-copilot](https://github.com/eugeneyan/obsidian-copilot) | 559 | AI copilot для writing and thinking с RAG | Паттерны retrieval из vault для генерации |
+| [qgrail/obsidian-ai-assistant](https://github.com/qgrail/obsidian-ai-assistant) | 366 | AI Assistant Plugin для Obsidian (multi-provider) | Архитектура multi-provider AI assistant |
+| [Roasbeef/obsidian-claude-code](https://github.com/Roasbeef/obsidian-claude-code) | 196 | Claude AI embedded directly in Obsidian vault | Паттерны прямой AI интеграции в vault |
+| [edonyzpc/personal-assistant](https://github.com/edonyzpc/personal-assistant) | 141 | AI agents для автоматического управления Obsidian vault | Автоматизация vault management через агентов |
 
 ---
 
@@ -426,6 +441,106 @@
 
 ---
 
+## 11. 📓 Интеграция с Obsidian
+
+### Текущее состояние
+- `src/pipeline/_logic_provider.py` — Obsidian Logic Integration v16.0
+- Чтение brigade logic из `.obsidian/claw_logic/<brigade>.md`
+- Learning Log — запись обучающих выводов в `.obsidian/Learning_Log.md`
+- Vault Map: Concepts, Snippets, Protocols, Logic, Learning_Log
+- AFlow Obsidian override chain (`#instruction` tags)
+- Автосохранение удачного кода в `.obsidian/Knowledge/Snippets/`
+
+### Исследуемые статьи (30 статей)
+**Темы поиска:**
+- Knowledge management personal knowledge base AI
+- Note-taking retrieval augmented generation LLM
+- Zettelkasten knowledge graph linked notes AI
+
+### Планируемые улучшения
+
+#### 11.1 Obsidian Vault как RAG Source
+**Что:** Полная индексация Obsidian vault для retrieval-augmented generation при ответах бота.
+**Зачем:** Сейчас бот читает только `claw_logic/` файлы. Остальные заметки vault (Concepts, Protocols, ~сотни markdown файлов) не используются для обогащения ответов. Vault содержит накопленные знания, учебные материалы и протоколы, которые могут значительно улучшить качество ответов.
+**Как:** (1) `scripts/index_obsidian_vault.py` — сканирование всех `.md` файлов в vault, chunking по заголовкам. (2) Embeddings через sentence-transformers (CPU, `all-MiniLM-L6-v2`). (3) SQLite vector store в `.obsidian/embeddings.db`. (4) При запросе — similarity search по vault → top-5 chunks в контекст LLM. (5) Обновление индекса по `watchdog` при изменении файлов.
+**Источник:** khoj-ai/khoj (33.8k stars) — аналогичный RAG поверх Obsidian.
+
+#### 11.2 Obsidian как обучающий инструмент (Self-Teaching Pipeline)
+**Что:** Автоматическая генерация обучающих материалов из диалогов бота в формате Obsidian заметок для дообучения моделей.
+**Зачем:** Текущий Learning Log записывает только ошибки и фиксы. Нужен полный pipeline: (диалоги → выводы → SFT/GRPO данные → Obsidian заметки → review → тренировка). Obsidian vault становится источником качественных обучающих данных.
+**Как:** (1) Расширить `record_learning()` в `_logic_provider.py` для записи не только ошибок, а всех высокооценённых диалогов (reward > 0.7). (2) Формат: YAML frontmatter + Markdown body → `.obsidian/Training_Data/`. (3) `scripts/obsidian_to_training.py` — конвертация заметок в JSONL для SFT/GRPO. (4) Human-in-the-loop review через Obsidian UI (добавить тег `#approved` → включить в тренировку). (5) Периодический export в `data/training/` для `training_orchestrator.py`.
+**Источник:** Research on human-in-the-loop data curation via knowledge management tools.
+
+#### 11.3 Двусторонняя синхронизация знаний Obsidian ↔ Memory
+**Что:** Автоматическая синхронизация между TieredMemory бота и Obsidian vault — факты из памяти бота записываются в vault, заметки vault загружаются в memory.
+**Зачем:** Сейчас память бота и Obsidian vault — изолированные хранилища. CRITICAL факты из `memory_gc.py` не отражены в vault, а протоколы из vault не загружены в hot memory.
+**Как:** (1) `MemoryGC.on_promote(CRITICAL)` → записать факт в `.obsidian/Knowledge/Facts/<date>.md`. (2) При старте бота — загрузить все `.obsidian/Knowledge/Protocols/*.md` в hot memory как system-level facts. (3) Cron (ежечасно): diff memory vs vault → sync новые факты в обе стороны. (4) Conflict resolution: vault wins (human-edited считается authority).
+**Источник:** obsidian-Smart2Brain, eugeneyan/obsidian-copilot — паттерны bidirectional sync.
+
+#### 11.4 Obsidian Graph для контекстной навигации
+**Что:** Использование графа связей Obsidian (`[[ссылки]]`) для контекстной навигации при ответах.
+**Зачем:** Obsidian vault содержит граф связей между заметками. Если пользователь спрашивает о "GRPO training", бот может найти заметку "GRPO" → перейти по связям к "Reward Model", "LoRA", "Qwen" → обогатить контекст.
+**Как:** (1) Парсинг `[[wiki links]]` из всех `.md` файлов vault. (2) Построение NetworkX графа связей (аналогично `src/memory/graph_engine.py`). (3) При запросе: найти ближайшую заметку → BFS по графу (depth=2) → собрать контекст из связанных заметок.
+**Источник:** Research on Zettelkasten + AI knowledge graph traversal.
+
+#### 11.5 Obsidian Templates для стандартизации данных
+**Что:** Obsidian Templates для стандартизации структуры обучающих данных, протоколов, и логов.
+**Зачем:** Сейчас Learning Log — плоская markdown таблица. Templates позволят создавать структурированные заметки с YAML frontmatter, tags, и links.
+**Как:** (1) `.obsidian/Templates/training_example.md` — шаблон с frontmatter: model, reward_score, task_type, date. (2) `.obsidian/Templates/protocol.md` — шаблон протокола бригады. (3) `_logic_provider.py` использует templates при записи. (4) `scripts/obsidian_to_training.py` парсит YAML frontmatter для фильтрации.
+**Источник:** nhaouari/obsidian-textgenerator-plugin — паттерны structured templates.
+
+---
+
+## 12. 🔀 Улучшение моделей OpenRouter
+
+### Текущее состояние
+- Основная модель: `nvidia/nemotron-3-super-120b-a12b:free` (12 из 15 ролей)
+- Вторичная: `arcee-ai/trinity-large-preview:free` (2 роли: research-brigade-lead, test-strategist)
+- Лёгкая: `arcee-ai/trinity-mini:free` (3 роли: test-runner, code-reviewer, log-analyst)
+- OpenRouter через `src/openrouter_client.py` с circuit breaker + retry
+- SmartModelRouter с UCB1 exploration (`src/ai/inference/router.py`)
+- Token counter (multilingual-aware) для оценки стоимости
+
+### Исследуемые статьи (30 статей)
+**Темы поиска:**
+- LLM model routing selection optimization API
+- Multi-model ensemble routing inference cost
+- Model evaluation comparison benchmark selection
+
+### Планируемые улучшения
+
+#### 12.1 Intelligent Model Fallback Chain
+**Что:** Автоматическая цепочка fallback моделей при недоступности основной: nemotron-120b → trinity-large → trinity-mini → deepseek:free.
+**Зачем:** Сейчас при недоступности одной модели circuit breaker просто фейлит запрос. Нужен graceful fallback на альтернативную модель.
+**Как:** (1) Конфигурация fallback chains в `config/openclaw_config.json` для каждой роли. (2) Расширить `openrouter_client.py`: если модель вернула 429/503/timeout → попробовать следующую в chain. (3) Логирование fallback events для анализа стабильности моделей. (4) Метрика: fallback_rate per model per hour.
+**Источник:** Research on multi-model routing and failover patterns.
+
+#### 12.2 Dynamic Model Selection по типу задачи
+**Что:** Автоматический выбор оптимальной модели на основе типа задачи вместо фиксированного маппинга role → model.
+**Зачем:** Сейчас все 12 основных ролей используют nemotron-120b, хотя для простых задач (intent classification, short answers) хватит trinity-mini. Это экономит rate limits и ускоряет ответы.
+**Как:** (1) Расширить `SmartModelRouter` в `src/ai/inference/router.py`: task_type = `route_llm()` → complexity_score → выбор модели. (2) Маппинг: simple (< 50 tokens input) → trinity-mini, medium → trinity-large, complex (research, code) → nemotron-120b. (3) UCB1 exploration для обнаружения лучших моделей для каждого task_type.
+**Источник:** Research on adaptive model routing for cost optimization.
+
+#### 12.3 Model Quality Monitoring Dashboard
+**Что:** Автоматический мониторинг качества ответов каждой модели с метриками и алертами.
+**Зачем:** Бесплатные модели OpenRouter могут деградировать без предупреждения (версионирование, throttling). Нужен мониторинг.
+**Как:** (1) `src/monitoring/model_quality.py` — сбор метрик: response_time, token_count, user_rating, safety_score per model. (2) SQLite таблица `model_metrics`. (3) Ежедневный анализ трендов: если quality_score модели упал > 15% за неделю → алерт в Telegram. (4) Автоматическое переключение на backup модель при sustained degradation.
+**Источник:** Research on LLM monitoring and quality assurance.
+
+#### 12.4 Prompt Optimization per Model
+**Что:** Адаптация system prompt и форматирования под каждую конкретную модель OpenRouter.
+**Зачем:** Nemotron-120b, Trinity-large, и Trinity-mini имеют разные сильные/слабые стороны и оптимальные prompt formats. Единый prompt не оптимален.
+**Как:** (1) `config/model_prompts.json` — per-model system prompt templates с переменными. (2) Nemotron: подробные инструкции (128k контекст), Trinity-large: среднее, Trinity-mini: лаконичные (32k контекст). (3) `_core.py` подставляет prompt template по текущей модели. (4) A/B testing: 50/50 split → compare quality scores.
+**Источник:** Research on model-specific prompt engineering.
+
+#### 12.5 OpenRouter Cost Analytics
+**Что:** Детальная аналитика расхода токенов и условной стоимости по моделям, ролям, и бригадам.
+**Зачем:** Бесплатные модели имеют rate limits. Нужно понимать где тратятся токены и как оптимизировать.
+**Как:** (1) Расширить `interaction_logger.py` для записи: model, input_tokens, output_tokens, latency, role, brigade. (2) `scripts/analytics_report.py` — еженедельный отчёт: top-10 expensive queries, tokens per brigade, model utilization. (3) Визуализация в Obsidian: `.obsidian/Analytics/weekly_report.md`.
+**Источник:** Research on LLM cost optimization and usage analytics.
+
+---
+
 ## 📊 Сводная таблица улучшений
 
 | # | Категория | Улучшение | Приоритет | Сложность | Источник |
@@ -460,6 +575,16 @@
 | 10.1 | OpenClaw | Agent Personalities | 🔴 Низкий | Низкая | Agent design |
 | 10.2 | OpenClaw | Inter-Brigade Protocol | 🟡 Средний | Средняя | MARTI patterns |
 | 10.3 | OpenClaw | Self-Improvement Loop | 🟢 Высокий | Высокая | Self-improving AI |
+| 11.1 | Obsidian | Vault как RAG Source | 🟢 Высокий | Средняя | khoj-ai/khoj |
+| 11.2 | Obsidian | Self-Teaching Pipeline | 🟢 Высокий | Высокая | Training research |
+| 11.3 | Obsidian | Двусторонняя синхронизация | 🟡 Средний | Средняя | Smart2Brain |
+| 11.4 | Obsidian | Graph навигация | 🟡 Средний | Средняя | Zettelkasten research |
+| 11.5 | Obsidian | Templates для данных | 🟢 Высокий | Низкая | TextGenerator plugin |
+| 12.1 | OpenRouter | Fallback Chain | 🟢 Высокий | Низкая | Routing research |
+| 12.2 | OpenRouter | Dynamic Model Selection | 🟢 Высокий | Средняя | Cost optimization |
+| 12.3 | OpenRouter | Quality Monitoring | 🟢 Высокий | Средняя | LLM monitoring |
+| 12.4 | OpenRouter | Prompt per Model | 🟡 Средний | Средняя | Prompt engineering |
+| 12.5 | OpenRouter | Cost Analytics | 🟡 Средний | Низкая | Analytics research |
 
 ---
 
@@ -471,40 +596,49 @@
 3. **3.2** Adaptive Compression Thresholds
 4. **4.1** Academic Source Integration (Semantic Scholar + arXiv)
 5. **5.2** Confidence-Calibrated Responses
+6. **11.5** Obsidian Templates для стандартизации данных
+7. **12.1** Intelligent Model Fallback Chain
 
 ### Волна 2 — Core Improvements (3-5 дней каждое)
-6. **1.2** Graceful Degradation Circuit Breakers
-7. **5.1** Multi-Layer Injection Defense
-8. **6.1** Response Streaming
-9. **7.2** Parallel Sub-Task Execution
-10. **8.1** Golden Set Evaluation
+8. **1.2** Graceful Degradation Circuit Breakers
+9. **5.1** Multi-Layer Injection Defense
+10. **6.1** Response Streaming
+11. **7.2** Parallel Sub-Task Execution
+12. **8.1** Golden Set Evaluation
+13. **11.1** Obsidian Vault как RAG Source
+14. **12.2** Dynamic Model Selection по типу задачи
+15. **12.3** Model Quality Monitoring
 
 ### Волна 3 — Major Features (1-2 недели каждое)
-11. **9.1** Online RL Training (verl integration)
-12. **2.1** Adaptive MoA
-13. **10.3** Self-Improvement Loop
-14. **8.3** E2E Integration Tests
-15. **3.1** Knowledge Graph Memory
+16. **9.1** Online RL Training (verl integration)
+17. **2.1** Adaptive MoA
+18. **10.3** Self-Improvement Loop
+19. **8.3** E2E Integration Tests
+20. **3.1** Knowledge Graph Memory
+21. **11.2** Obsidian Self-Teaching Pipeline
+22. **11.3** Двусторонняя синхронизация Obsidian ↔ Memory
 
 ### Волна 4 — Advanced (2+ недели)
-16. **1.1** Event-Driven Pipeline
-17. **9.2** Tool-Use RL Training
-18. **6.3** Semantic Cache
-19. **7.1** Dynamic Pipeline Composition
-20. **9.3** Curriculum Learning
+23. **1.1** Event-Driven Pipeline
+24. **9.2** Tool-Use RL Training
+25. **6.3** Semantic Cache
+26. **7.1** Dynamic Pipeline Composition
+27. **9.3** Curriculum Learning
+28. **11.4** Obsidian Graph навигация
+29. **12.4** Prompt Optimization per Model
 
 ---
 
 ## 📌 Как запустить парсер
 
 ```bash
-# Полный парсинг (30 статей на категорию, 4 источника)
+# Полный парсинг (30 статей на категорию, 4 источника, 12 категорий)
 python scripts/research_comprehensive_parser.py --limit 30
 
 # Быстрый тест (dry run)
 python scripts/research_comprehensive_parser.py --dry-run
 
-# Пользовательский лимит
+# Пользовательский лимит (10 статей на категорию)
 python scripts/research_comprehensive_parser.py --limit 10 --limit-per-source 5
 
 # Тесты
@@ -514,3 +648,5 @@ python -m pytest tests/test_comprehensive_research_parser.py -v
 ---
 
 > 📝 **Примечание:** Этот roadmap — живой документ. Приоритеты могут меняться на основе обратной связи пользователей и результатов исследований. Парсер `research_comprehensive_parser.py` можно перезапускать для обновления статей.
+
+> 🆕 **Обновление 2026-04-03:** Добавлены категории 11 (Obsidian) и 12 (OpenRouter). Парсер расширен до 12 категорий × 3 темы × 4 источника = 144 поисковых запроса. Добавлены 7 GitHub-репозиториев для Obsidian + AI интеграции.

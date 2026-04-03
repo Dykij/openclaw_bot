@@ -1,5 +1,5 @@
 """
-Tests for Comprehensive Research Parser — 10 categories × 4 sources.
+Tests for Comprehensive Research Parser — 12 categories × 4 sources.
 """
 
 import json
@@ -37,14 +37,15 @@ from scripts.research_comprehensive_parser import (
 class TestCategoryStructure:
     """Tests for the 10-category research structure."""
 
-    def test_exactly_10_categories(self):
-        assert len(RESEARCH_CATEGORIES) == 10
+    def test_exactly_12_categories(self):
+        assert len(RESEARCH_CATEGORIES) == 12
 
     def test_category_keys(self):
         expected = {
             "architecture", "intelligent_modules", "memory_systems",
             "deep_research", "safety", "performance", "pipelines",
             "testing", "model_training", "general_agents",
+            "obsidian_integration", "openrouter_models",
         }
         assert set(RESEARCH_CATEGORIES.keys()) == expected
 
@@ -52,9 +53,9 @@ class TestCategoryStructure:
         for key, info in RESEARCH_CATEGORIES.items():
             assert len(info["topics"]) == 3, f"{key} should have 3 topics, has {len(info['topics'])}"
 
-    def test_total_30_topics(self):
+    def test_total_36_topics(self):
         total = sum(len(c["topics"]) for c in RESEARCH_CATEGORIES.values())
-        assert total == 30
+        assert total == 36
 
     def test_each_category_has_names(self):
         for key, info in RESEARCH_CATEGORIES.items():
@@ -90,7 +91,7 @@ class TestGitHubRepos:
     """Tests for the GitHub repositories list."""
 
     def test_repos_exist(self):
-        assert len(GITHUB_REPOS) >= 15
+        assert len(GITHUB_REPOS) >= 22
 
     def test_repo_has_required_fields(self):
         for repo in GITHUB_REPOS:
@@ -117,6 +118,7 @@ class TestGitHubRepos:
         assert "OpenRLHF/OpenRLHF" in names
         assert "vllm-project/vllm" in names
         assert "verl-project/verl" in names
+        assert "khoj-ai/khoj" in names
 
 
 # ============================================================
@@ -439,7 +441,7 @@ class TestParseAllCategories:
 
     def test_dry_run_returns_empty(self):
         result = parse_all_categories(limit_per_source=1, dry_run=True)
-        assert len(result) == 10
+        assert len(result) == 12
         for articles in result.values():
             assert articles == []
 
