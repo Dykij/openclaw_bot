@@ -30,6 +30,13 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional
 import aiohttp
 import structlog
 
+from src.exceptions import (
+    LLMProviderError,
+    LLMEmptyResponseError,
+    LLMRateLimitError,
+    CircuitBreakerOpenError,
+)
+
 logger = structlog.get_logger("LLMGateway")
 
 # ---------------------------------------------------------------------------
@@ -489,6 +496,8 @@ async def _call_openrouter(
     endpoint = f"{base_url}/chat/completions"
 
     if not api_key or _is_circuit_open(model):
+        if _is_circuit_open(model):
+            logger.debug("Circuit breaker open, skipping", model=model)
         return ""
 
     # Free-tier enforcement: reject models without :free suffix to prevent 402
