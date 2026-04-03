@@ -4,6 +4,8 @@ import sys
 import os
 import time
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.openrouter_client import (
@@ -82,12 +84,13 @@ def test_per_model_isolation():
 # ---------------------------------------------------------------------------
 # Rate Limit Tracking
 # ---------------------------------------------------------------------------
-def test_update_rate_limits():
+@pytest.mark.asyncio
+async def test_update_rate_limits():
     headers = {
         "x-ratelimit-remaining-requests": "42",
         "x-ratelimit-remaining-tokens": "100000",
     }
-    _update_rate_limits(headers)
+    await _update_rate_limits(headers)
     assert _rate_limit_state["requests_remaining"] == 42
     assert _rate_limit_state["tokens_remaining"] == 100000
     print("[PASS] rate limit tracking from headers")
@@ -105,11 +108,12 @@ def test_rate_limit_info():
     print("[PASS] get_rate_limit_info")
 
 
-def test_update_rate_limits_missing_headers():
+@pytest.mark.asyncio
+async def test_update_rate_limits_missing_headers():
     """Headers without rate limit info should not crash."""
     _rate_limit_state["requests_remaining"] = 999
     _rate_limit_state["tokens_remaining"] = 999999
-    _update_rate_limits({"content-type": "application/json"})
+    await _update_rate_limits({"content-type": "application/json"})
     assert _rate_limit_state["requests_remaining"] == 999  # unchanged
     print("[PASS] missing rate limit headers handled")
 
