@@ -13,8 +13,10 @@ logger = structlog.get_logger(__name__)
 
 
 # v14.4: Multi-Task Decomposer regex
+# Atomic-style match: capture number + body up to next numbered item or end.
+# Avoids backtracking on long whitespace runs.
 _NUMBERED_RE = re.compile(
-    r"(?:^|\n)\s*(\d+)\.\s+(.+?)(?=\n\s*\d+\.\s|\Z)",
+    r"(?:^|\n)\s{0,10}(\d+)\.\s+(.+?)(?=\n\s{0,10}\d+\.\s|\Z)",
     re.DOTALL,
 )
 
