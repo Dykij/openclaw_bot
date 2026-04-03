@@ -407,11 +407,12 @@ async def route_llm(
     # --- Record metrics ---
     elapsed_ms = (time.monotonic() - t0) * 1000
     if _metrics_collector and result:
+        from src.utils.token_counter import estimate_tokens as _est_tokens
         prompt_tokens_est = sum(
-            len(m.get("content", "") if isinstance(m.get("content"), str) else str(m.get("content", "")))
+            _est_tokens(m.get("content", "") if isinstance(m.get("content"), str) else str(m.get("content", "")))
             for m in messages
-        ) // 4
-        completion_tokens_est = len(result) // 4
+        )
+        completion_tokens_est = _est_tokens(result)
         _metrics_collector.record_inference(
             model=selected_model or "unknown",
             prompt_tokens=prompt_tokens_est,

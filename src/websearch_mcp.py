@@ -7,16 +7,20 @@ web_fetch strategy (in order):
   1. Jina Reader (r.jina.ai/<url>) — zero-config, returns clean Markdown, no JS issues.
   2. Plain HTTP via urllib — fallback for Jina failures.
 Both routes strip excess whitespace before returning to save LLM tokens.
+
+v17.0: Added TTL cache for search results (10 min) and fetch results (1 hour).
 """
 
 import asyncio
 import json
 import re
 import sys
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
-from typing import Any
+from collections import OrderedDict
+from typing import Any, Optional
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -35,6 +39,40 @@ _WEB_FETCH_MAX_CHARS = 32_000
 
 # Jina Reader base URL — prepend to any target URL for clean Markdown output
 _JINA_BASE = "https://r.jina.ai/"
+
+
+# ---------------------------------------------------------------------------
+# TTL Cache for search/fetch results
+# ---------------------------------------------------------------------------
+class _TTLCache:
+    """Simple TTL cache with max size."""
+
+    def __init__(self, maxsize: int = 200, ttl: float = 600.0) -> None:
+        self._data: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+        self._maxsize = maxsize
+        self._ttl = ttl
+
+    def get(self, key: str) -> Optional[Any]:
+        if key not in self._data:
+            return None
+        value, ts = self._data[key]
+        if time.monotonic() - ts > self._ttl:
+            del self._data[key]
+            return None
+        self._data.move_to_end(key)
+        return value
+
+    def put(self, key: str, value: Any) -> None:
+        self._data[key] = (value, time.monotonic())
+        self._data.move_to_end(key)
+        while len(self._data) > self._maxsize:
+            self._data.popitem(last=False)
+
+
+# Search cache: 10-min TTL, max 200 entries
+_search_cache = _TTLCache(maxsize=200, ttl=600.0)
+# Fetch cache: 1-hour TTL, max 100 entries (pages are larger)
+_fetch_cache = _TTLCache(maxsize=100, ttl=3600.0)
 
 
 @server.list_tools()
@@ -220,14 +258,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if not url:
             return [TextContent(type="text", text="[web_fetch error] No URL provided.")]
         max_chars = int(arguments.get("max_chars", _WEB_FETCH_MAX_CHARS))
+        # Check fetch cache
+        cache_key = f"fetch:{url}:{max_chars}"
+        cached = _fetch_cache.get(cache_key)
+        if cached is not None:
+            return [TextContent(type="text", text=cached)]
         loop = asyncio.get_event_loop()
         content = await loop.run_in_executor(None, _sync_fetch, url, max_chars)
+        _fetch_cache.put(cache_key, content)
         return [TextContent(type="text", text=content)]
 
     if name == "web_search":
         query = arguments["query"]
         max_results = arguments.get("max_results", 5)
         region = arguments.get("region", "wt-wt")
+
+        # Check search cache
+        cache_key = f"search:{query}:{max_results}:{region}"
+        cached = _search_cache.get(cache_key)
+        if cached is not None:
+            return [TextContent(type="text", text=cached)]
 
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(None, _sync_search, query, max_results, region)
@@ -242,11 +292,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 f"   URL: {r.get('href', r.get('link', 'N/A'))}\n"
                 f"   {r.get('body', r.get('snippet', ''))}"
             )
-        return [TextContent(type="text", text="\n\n".join(formatted))]
+        text = "\n\n".join(formatted)
+        _search_cache.put(cache_key, text)
+        return [TextContent(type="text", text=text)]
 
     elif name == "web_news_search":
         query = arguments["query"]
         max_results = arguments.get("max_results", 5)
+
+        # Check news cache
+        cache_key = f"news:{query}:{max_results}"
+        cached = _search_cache.get(cache_key)
+        if cached is not None:
+            return [TextContent(type="text", text=cached)]
 
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(None, _sync_news, query, max_results)
@@ -262,7 +320,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 f"   URL: {r.get('url', r.get('link', 'N/A'))}\n"
                 f"   {r.get('body', '')}"
             )
-        return [TextContent(type="text", text="\n\n".join(formatted))]
+        text = "\n\n".join(formatted)
+        _search_cache.put(cache_key, text)
+        return [TextContent(type="text", text=text)]
 
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

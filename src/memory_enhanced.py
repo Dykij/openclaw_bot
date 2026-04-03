@@ -31,8 +31,9 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 def _estimate_tokens(text: str) -> int:
-    """~4 chars ≈ 1 token (English/Russian mix)."""
-    return max(1, len(text) // 4)
+    """Estimate token count with multilingual awareness."""
+    from src.utils.token_counter import estimate_tokens as _central_estimate
+    return _central_estimate(text)
 
 
 # ---------------------------------------------------------------------------

@@ -1548,8 +1548,9 @@ class PipelineExecutor:
         elapsed_ms = (time.monotonic() - t0) * 1000
 
         used_model = or_model or model
-        prompt_tokens_est = (len(system_prompt) + len(user_prompt)) // 4
-        completion_tokens_est = len(result) // 4
+        from src.utils.token_counter import estimate_tokens as _est_tokens
+        prompt_tokens_est = _est_tokens(system_prompt) + _est_tokens(user_prompt)
+        completion_tokens_est = _est_tokens(result)
         self.metrics_collector.record_inference(
             model=used_model,
             prompt_tokens=prompt_tokens_est,

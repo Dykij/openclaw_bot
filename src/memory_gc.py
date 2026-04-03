@@ -19,7 +19,9 @@ import aiohttp
 
 # Rough token estimation: ~4 chars ≈ 1 token (works for English/Russian mix)
 def estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
+    """Estimate token count with multilingual awareness."""
+    from src.utils.token_counter import estimate_tokens as _estimate
+    return _estimate(text)
 
 
 class MemoryGarbageCollector:

@@ -373,8 +373,9 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
             }
             _dur = f"{_pipeline_elapsed:.1f}s"
             _steps_count = len(all_steps)
+            from src.utils.token_counter import estimate_tokens as _est_tokens
             _total_tok = sum(
-                len(s.get("response", "")) // 4 for s in all_steps
+                _est_tokens(s.get("response", "")) for s in all_steps
             )
             meta_footer = (
                 f"\n\n<tg-spoiler>📊 {display_brigade} | {chain_str} | "
@@ -568,7 +569,8 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
     _dur = f"{_pipeline_elapsed:.1f}s"
     _steps_count = len(result.get("steps", []))
     _hall_risk = hall_result.overall_risk
-    _total_est_tokens = sum(len(s.get("response", "")) // 4 for s in result.get("steps", []))
+    from src.utils.token_counter import estimate_tokens as _est_tokens
+    _total_est_tokens = sum(_est_tokens(s.get("response", "")) for s in result.get("steps", []))
     meta_footer = (
         f"\n\n<tg-spoiler>📊 {display_brigade} | {chain_str} | "
         f"⏱ {_dur} | 🔗 {_steps_count} steps | "

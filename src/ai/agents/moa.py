@@ -1,13 +1,13 @@
 """Mixture-of-Agents — multi-perspective generation with aggregation.
 
-**WARNING**: On a 16 GB GPU this triples inference time (3 sequential
-generations + 1 aggregation per request).  Use only for high-stakes
-tasks where quality is more important than latency.
-
 Reference: Wang et al., "Mixture-of-Agents Enhances Large Language
 Model Capabilities", arXiv:2406.04692.
+
+v17.0: Proposers run in parallel via asyncio.gather() for ~3x speedup.
+Timeout per proposer (30s) with graceful degradation.
 """
 
+import asyncio
 import time
 from typing import List, Optional
 
@@ -17,11 +17,14 @@ from src.ai.agents._shared import (
     logger,
 )
 
+# Maximum time per proposer before timeout
+_PROPOSER_TIMEOUT_SEC = 30.0
+
 
 class MixtureOfAgents:
     """Combines multiple agent perspectives for higher-quality output.
 
-    Layer 1 — *Proposers*: generate diverse candidate responses.
+    Layer 1 — *Proposers*: generate diverse candidate responses (in parallel).
     Layer 2 — *Aggregator*: synthesises the best parts into one answer.
     """
 
@@ -49,23 +52,46 @@ class MixtureOfAgents:
         prompts = self._resolve_system_prompts(system_prompts)
         start = time.monotonic()
 
-        # Layer 1 — sequential to stay within 16 GB VRAM
-        proposals: List[str] = []
-        for idx, sys_prompt in enumerate(prompts):
-            logger.info("moa_proposer", proposer=idx + 1, total=len(prompts))
-            proposal = await call_vllm(
-                self.vllm_url,
-                self.model,
-                [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.5 + idx * 0.1,
+        # Layer 1 — parallel proposers for ~3x speedup
+        async def _propose(idx: int, sys_prompt: str) -> str:
+            try:
+                return await asyncio.wait_for(
+                    call_vllm(
+                        self.vllm_url,
+                        self.model,
+                        [
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.5 + idx * 0.1,
+                    ),
+                    timeout=_PROPOSER_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("moa_proposer_timeout", proposer=idx + 1)
+                return f"[Proposer {idx + 1} timed out]"
+            except Exception as e:
+                logger.warning("moa_proposer_error", proposer=idx + 1, error=str(e))
+                return f"[Proposer {idx + 1} error: {e}]"
+
+        logger.info("moa_parallel_proposers", count=len(prompts))
+        proposals: List[str] = await asyncio.gather(
+            *[_propose(idx, sp) for idx, sp in enumerate(prompts)]
+        )
+
+        # Filter out failed proposals for aggregation
+        valid_proposals = [p for p in proposals if not p.startswith("[Proposer")]
+        if not valid_proposals:
+            # All proposers failed — return best effort
+            return MoAResult(
+                aggregated_response="All proposers failed. No output available.",
+                proposals=proposals,
+                num_proposers=len(prompts),
+                elapsed_sec=time.monotonic() - start,
             )
-            proposals.append(proposal)
 
         # Layer 2 — Aggregator
-        aggregated = await self._aggregate(prompt, proposals)
+        aggregated = await self._aggregate(prompt, valid_proposals)
         return MoAResult(
             aggregated_response=aggregated,
             proposals=proposals,
