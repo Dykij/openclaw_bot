@@ -264,10 +264,12 @@ async def route_llm(
 
     # v14.4: Intent tasks get max 1 retry (fast-fail to keyword fallback)
     _retries = 1 if task_type == "intent" else 3
+    # Intent classification should fail fast (15s timeout) — keyword fallback is fine
+    _timeout_override = 15 if task_type == "intent" else None
 
     api_key = _openrouter_config.get("api_key", "")
     if api_key and _openrouter_config.get("enabled", False):
-        result = await _call_openrouter(messages, selected_model, max_tokens, temperature, retries=_retries)
+        result = await _call_openrouter(messages, selected_model, max_tokens, temperature, retries=_retries, timeout_override=_timeout_override)
         if result:
             used_provider = "openrouter"
 
@@ -381,6 +383,7 @@ async def _call_openrouter(
     max_tokens: int,
     temperature: float,
     retries: int = 3,
+    timeout_override: Optional[int] = None,
 ) -> str:
     """Call OpenRouter API with retry + circuit breaker awareness."""
     from src.openrouter_client import _is_circuit_open, _record_failure, _record_success
@@ -411,7 +414,7 @@ async def _call_openrouter(
         "temperature": temperature,
     }
 
-    timeout = aiohttp.ClientTimeout(total=120)
+    timeout = aiohttp.ClientTimeout(total=timeout_override or 120)
     for attempt in range(retries):
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
