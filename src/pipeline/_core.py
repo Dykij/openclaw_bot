@@ -313,18 +313,28 @@ class PipelineExecutor:
         return await reflexion_fallback(self.config, prompt, error_response)
 
     async def _quick_inference(self, prompt: str) -> str:
-        """v16.4: Fast LLM inference for autonomous reflection (Self-Healing)."""
+        """v16.4: Fast LLM inference for autonomous reflection (Self-Healing).
+
+        Uses the primary model from SmartModelRouter rather than the
+        previously hard-coded llama-3.3-70b which is frequently rate-limited.
+        """
+        _heal_model = (
+            self.config.get("system", {}).get("model_router", {}).get("general")
+            or "nvidia/nemotron-3-super-120b-a12b:free"
+        )
         try:
             return await route_llm(
                 prompt,
                 system="You are a debugging assistant. Be concise. Answer in Russian.",
-                model="meta-llama/llama-3.3-70b-instruct:free",
+                model=_heal_model,
                 max_tokens=512,
                 temperature=0.3,
+                skip_approval=True,
             )
         except Exception as e:
             logger.warning("v16.4 quick inference failed", error=str(e))
             return ""
+
 
     async def initialize(self):
         """Initializes internal components like MCP.
@@ -917,12 +927,15 @@ class PipelineExecutor:
                 # --- v16.4: General step error detection + self-healing retry ---
                 if not _autoheal_used and response:
                     _resp_lower = (response or "").lower()
+                    # Strip code fences before checking for error markers so that
+                    # legitimate code blocks containing 'error:' don't trigger healing.
+                    _resp_no_code = re.sub(r"```[\s\S]*?```", "", _resp_lower)
                     _has_error_markers = (
                         response.startswith("⚠️")
-                        or "traceback" in _resp_lower
-                        or "exception:" in _resp_lower
-                        or "error:" in _resp_lower
-                        or "failed to execute" in _resp_lower
+                        or "traceback" in _resp_no_code
+                        or "exception:" in _resp_no_code
+                        or ("error:" in _resp_no_code and not _resp_no_code.startswith("```"))
+                        or "failed to execute" in _resp_no_code
                     )
                     if _has_error_markers:
                         _autoheal_used = True

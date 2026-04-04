@@ -57,7 +57,18 @@ _RETRY_BASE_DELAY = 1.0  # seconds, doubles each retry
 # LRU result cache — avoids redundant DuckDuckGo calls in multi-query research
 # Uses shared TTLCache from src.utils.cache (standalone, no heavy deps).
 # ---------------------------------------------------------------------------
-from src.utils.cache import TTLCache as _TTLCache
+try:
+    # Normal import when running as part of the package
+    from src.utils.cache import TTLCache as _TTLCache
+except ImportError:
+    # MCP server is launched as a subprocess; src/ may not be on sys.path
+    import importlib.util as _ilu
+    import pathlib as _pl
+    _cache_path = _pl.Path(__file__).parent / "utils" / "cache.py"
+    _spec = _ilu.spec_from_file_location("src.utils.cache", _cache_path)
+    _mod = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
+    _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+    _TTLCache = _mod.TTLCache
 
 _SEARCH_CACHE_TTL = 600   # 10 minutes for search/news results
 _FETCH_CACHE_TTL = 3600   # 1 hour for fetched page content

@@ -97,12 +97,14 @@ async def classify_intent(gateway, prompt: str) -> str:
     keyword_result = _keyword_classify(prompt)
 
     # Try LLM-based classification
+    # gateway may be a real OpenClawGateway object (has .config) or a plain config dict
+    _cfg = gateway.config if hasattr(gateway, "config") else gateway
     classify_model = (
-        gateway.config.get("system", {}).get("model_router", {}).get("risk_analysis")
+        _cfg.get("system", {}).get("model_router", {}).get("risk_analysis")
         or next(
             (
                 d["model"]
-                for brigade in gateway.config.get("brigades", {}).values()
+                for brigade in _cfg.get("brigades", {}).values()
                 for d in brigade.get("roles", {}).values()
             ),
             "llama3.2",
@@ -110,7 +112,7 @@ async def classify_intent(gateway, prompt: str) -> str:
     )
 
     try:
-        brigades = list(gateway.config.get("brigades", {}).keys())
+        brigades = list(_cfg.get("brigades", {}).keys())
         all_classes = brigades + ["General"]
         classify_prompt = (
             f"Classify this user request into ONE of these categories: {', '.join(all_classes)}.\n"

@@ -97,6 +97,9 @@ def configure(config: Dict[str, Any]) -> None:
         router_cfg = config.get("system", {}).get("model_router", {})
         profiles: Dict[str, Any] = {}
         for task_type, model_name in router_cfg.items():
+            # Skip non-model entries such as inline notes / comments
+            if not isinstance(model_name, str) or "/" not in model_name:
+                continue
             if model_name not in profiles:
                 is_fast = "7b" in model_name.lower() or "mini" in model_name.lower()
                 profiles[model_name] = ModelProfile(

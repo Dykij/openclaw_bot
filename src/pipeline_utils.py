@@ -284,7 +284,12 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
     elif is_planner:
         os_name = "Windows" if os.name == "nt" else "Linux"
         system_prompt += (
-            "\n\n[AGENT PROTOCOL: STAR-STRATEGY — INTERNAL ONLY]"
+            "\n\n[PLANNER ROLE — CRITICAL CONSTRAINT]\n"
+            "⛔ ЗАПРЕЩЕНО писать код на любом языке программирования.\n"
+            "⛔ Твой вывод — ТОЛЬКО план действий (пронумерованный список шагов).\n"
+            "✅ Каждый шаг = одно конкретное действие для следующей роли (Executor).\n"
+            "✅ Если задача требует кода — опиши ЧТО нужно сделать, но НЕ пиши код.\n\n"
+            "[AGENT PROTOCOL: STAR-STRATEGY — INTERNAL ONLY]"
             "\n1. Memory Bank: Use .memory-bank for persistence."
             "\n2. Tooling: Если для ответа нужны данные из файловой системы, НЕМЕДЛЕННО вызывай доступные инструменты (list_directory, read_file). НЕ описывай, что ты хочешь вызвать — ВЫЗЫВАЙ."
             "\n   КОМАНДЫ В ТЕРМИНАЛЕ: Ты можешь запускать shell-команды САМОСТОЯТЕЛЬНО через инструмент run_command(command='...', workdir='.', timeout=30). "

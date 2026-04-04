@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from src.utils.async_utils import taskgroup_gather
+
 logger = logging.getLogger(__name__)
 
 # Максимальное количество итераций авто-исправления перед сдачей
