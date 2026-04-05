@@ -222,13 +222,16 @@ class RewardModel:
             explanation=f"reward={total:+.4f} [{explanation}]",
         )
 
-        logger.debug(
-            "reward_computed",
-            task_id=task.task_id,
-            reward=signal.total,
-            success=task.success,
-            task_type=task.task_type.value,
-        )
+        # Log every 100th compute to avoid hot-path overhead
+        if self._total_computed % 100 == 0:
+            logger.debug(
+                "reward_computed",
+                task_id=task.task_id,
+                reward=signal.total,
+                success=task.success,
+                task_type=task.task_type.value,
+                total_computed=self._total_computed,
+            )
         return signal
 
     def get_stats(self) -> Dict[str, Any]:

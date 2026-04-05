@@ -887,7 +887,9 @@ class TestMCTSIntegration:
         critic = QualityCritic()
         evaluator = MultiEvaluator(n_evaluations=2)
 
-        # Simulate 3 rounds
+        # Simulate 3 rounds (fixed seed for deterministic stability)
+        import random
+        rng = random.Random(42)
         for _ in range(3):
             batch = curriculum.sample_batch(4)
             assert len(batch) > 0
@@ -896,9 +898,8 @@ class TestMCTSIntegration:
             child = search.expand(leaf)
 
             # Simulate multi-eval
-            import random
             for _ in range(2):
-                score = random.uniform(0.4, 0.8)
+                score = rng.uniform(0.5, 0.8)
                 evaluator.record(child.node_id, score)
 
             result = evaluator.get_result(child.node_id)
