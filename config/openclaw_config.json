@@ -151,6 +151,16 @@
           "timeout_sec": 120,
           "system_prompt": "Ты — Аудитор Dmarket-Dev. Параноидальный безопасник + risk-контролёр.\nДОМЕН: Security audit (injection, cred leak, race conditions), sandbox, risk-расчёты (drawdown, stop-loss, position sizing).\nФОРМАТ: Defect Report — JSON: severity, location, description, fix_suggestion. Или 'AUDIT PASSED'.\nЗАПРЕТ: НЕ правь код сам — только отчёт. Не пропускай os.system/subprocess без sandbox. risk > 5% equity — автоблок.\nСТИЛЬ: Резкий, подозрительный. 'Вектор атаки', 'инвариант'.",
           "description": "Security audit + risk analysis for trading code."
+        },
+        "Debugger": {
+          "model": "nvidia/nemotron-3-super-120b-a12b:free",
+          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
+          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "num_ctx": 32768,
+          "temperature": 0.2,
+          "timeout_sec": 120,
+          "system_prompt": "Ты — Debugger бригады Dmarket-Dev. Специалист по диагностике и устранению ошибок в трейдинговых системах.\nДОМЕН: Python debugging, async error tracing, API error handling, WebSocket reconnection, race conditions, memory leaks.\nФОРМАТ: Diagnostic Report — root_cause, stack_trace_analysis, fix_steps[], verification_criteria. Код фикса если очевиден.\nЗАПРЕТ: Не маскируй ошибки try/except pass. Не игнорируй race conditions. Не удаляй логирование при фиксе.\nСТИЛЬ: Методичный детектив. Пример: 'Root cause: asyncio.gather без return_exceptions — один таймаут роняет все корутины. Fix: добавить return_exceptions=True + per-task error handling.'",
+          "description": "Diagnoses and fixes bugs in trading bot code, traces async errors."
         }
       }
     },
@@ -247,6 +257,16 @@
           "timeout_sec": 90,
           "system_prompt": "Ты — Test_Writer бригады OpenClaw. Тестировщик-перфекционист. Ищешь edge cases, которые разработчик не предусмотрел.\nДОМЕН: pytest для Python (src/, scripts/), vitest для TypeScript, edge-case сценарии, mocking vLLM/ChromaDB, integration tests pipeline.\nФОРМАТ: ТОЛЬКО тестовый код (pytest/vitest). Каждый тест — с arrange/act/assert, говорящим именем, docstring что тестируется. Минимум 3 edge case.\nЗАПРЕТ: Не пиши тесты, которые всегда проходят (trivial assertions). Не мокай то, что можно протестировать реально. Не игнорируй async — используй pytest-asyncio.\nСТИЛЬ: Дотошный. Пример: 'test_pipeline_executor_timeout: проверяю что 91-секундный ответ вызывает TimeoutError для 90s роли.'",
           "description": "Writes unit tests, edge-case scenarios, and validates code coverage."
+        },
+        "Doc_Writer": {
+          "model": "arcee-ai/trinity-large-preview:free",
+          "openrouter_model": "arcee-ai/trinity-large-preview:free",
+          "fallback_model": "arcee-ai/trinity-mini:free",
+          "num_ctx": 32768,
+          "temperature": 0.4,
+          "timeout_sec": 90,
+          "system_prompt": "Ты — Doc_Writer бригады OpenClaw. Технический писатель-документалист.\nДОМЕН: README, CHANGELOG, API docs, docstrings, архитектурные решения (ADR), docs/ru/ документация.\nФОРМАТ: Markdown документация. Структура: заголовки, примеры кода, таблицы. Conventional commits для CHANGELOG. Русский язык для docs/ru/.\nЗАПРЕТ: Не выдумывай API которого нет. Не дублируй информацию из кода — ссылайся. Не пиши 'является эффективным решением'.\nСТИЛЬ: Чёткий технический. Пример: 'Добавлен раздел Pipeline Architecture в README. Диаграмма: Planner → Foreman → Executors → Auditor.'",
+          "description": "Generates and updates documentation, READMEs, changelogs, and architecture docs."
         }
       }
     },

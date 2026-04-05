@@ -239,6 +239,20 @@ def validate_test_writer(response_text: str) -> tuple[bool, str]:
     return True, ""
 
 
+def validate_doc_writer(response_text: str) -> tuple[bool, str]:
+    """Validate Doc_Writer output contains actual documentation."""
+    if len(response_text.strip()) < 40:
+        return False, "Документация слишком короткая. Добавь структуру, примеры, описания."
+    lower = response_text.lower()
+    has_doc_markers = any(kw in lower for kw in [
+        "##", "###", "```", "- ", "1.", "описание", "description",
+        "example", "пример", "usage", "api", "readme", "changelog",
+    ])
+    if not has_doc_markers:
+        return False, "Doc_Writer должен выдать Markdown-документацию с заголовками и структурой."
+    return True, ""
+
+
 ROLE_GUARDRAILS = {
     "Planner": validate_planner,
     "Auditor": validate_auditor,
@@ -252,6 +266,7 @@ ROLE_GUARDRAILS = {
     "Executor_Integration": validate_executor,
     "State_Manager": validate_state_manager,
     "Test_Writer": validate_test_writer,
+    "Doc_Writer": validate_doc_writer,
 }
 
 GUARDRAIL_MAX_RETRIES = 2
@@ -265,7 +280,7 @@ ROLE_TOKEN_BUDGET = {
     "Executor_Architect": 2048, "Executor_Integration": 2048,
     "Risk_Analyst": 1536, "Debugger": 2048, "Test_Writer": 2560,
     "Planner": 2048, "Foreman": 2048,
-    "Auditor": 1536,
+    "Auditor": 1536, "Doc_Writer": 2048,
 }
 
 # Roles eligible for MCP tool injection
@@ -274,5 +289,5 @@ TOOL_ELIGIBLE_ROLES = (
     "Executor_Integration", "Executor_Architect",
     "Latency_Optimizer", "Debugger", "Test_Writer",
     "Planner", "Foreman",
-    "Data_Analyst", "Risk_Analyst",
+    "Data_Analyst", "Risk_Analyst", "Doc_Writer",
 )

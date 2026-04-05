@@ -34,6 +34,21 @@ class AgentPersona:
     file_path: str = ""
 
 
+# Role-to-persona mapping for automatic persona augmentation
+_ROLE_PERSONA_MAP: Dict[str, str] = {
+    "Auditor": "security-auditor",
+    "Executor_Architect": "backend-architect",
+    "Coder": "senior-developer",
+    "Test_Writer": "qa-engineer",
+    "Doc_Writer": "technical-writer",
+    "Debugger": "code-reviewer",
+    "Foreman": "project-manager",
+    "Executor_Tools": "devops-engineer",
+    "Executor_Integration": "backend-architect",
+    "Researcher": "ml-engineer",
+}
+
+
 class AgentPersonaManager:
     """Singleton manager that loads and caches agent personas from agents/ directory."""
 
@@ -158,6 +173,28 @@ class AgentPersonaManager:
             f"{persona.system_prompt_addendum}\n"
             f"[END AGENT PERSONA]"
         )
+
+    def get_persona_for_role(self, role_name: str) -> Optional[AgentPersona]:
+        """Get the best matching persona for a pipeline role.
+
+        Uses explicit role-to-persona mapping from _ROLE_PERSONA_MAP,
+        falling back to None if no mapping exists.
+        """
+        slug = _ROLE_PERSONA_MAP.get(role_name)
+        if slug:
+            return self.get(slug)
+        return None
+
+    def augment_role_prompt(self, base_prompt: str, role_name: str) -> str:
+        """Augment a role's system prompt with matching persona context.
+
+        If no persona matches the role, returns the base prompt unchanged.
+        This is the main integration point for pipeline → persona connection.
+        """
+        persona = self.get_persona_for_role(role_name)
+        if persona:
+            return self.augment_system_prompt(base_prompt, persona)
+        return base_prompt
 
     @classmethod
     def reset(cls):

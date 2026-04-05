@@ -35,11 +35,12 @@ logger = structlog.get_logger("AFlow")
 _BRIGADE_ROLE_SETS: Dict[str, List[str]] = {
     "Dmarket-Dev": [
         "Planner", "Coder", "Auditor", "Executor_Tools",
-        "Executor_Architect", "State_Manager", "Archivist",
+        "Executor_Architect", "State_Manager", "Archivist", "Debugger",
     ],
     "OpenClaw-Core": [
         "Planner", "Foreman", "Executor_Tools", "Executor_Architect",
         "Auditor", "State_Manager", "Archivist", "Research_Ops",
+        "Test_Writer", "Doc_Writer",
     ],
     "Research-Ops": [
         "Researcher", "Analyst", "Summarizer", "Auditor",
@@ -74,13 +75,19 @@ _HEURISTIC_CHAINS: List[tuple[re.Pattern, List[str]]] = [
     # Config / system
     (re.compile(r"\b(config|конфиг|настрой|configure|deploy|pipeline|brigade)\b", re.I),
      ["Planner", "Executor_Tools", "State_Manager"]),
+    # Debug / error fix
+    (re.compile(r"\b(debug|дебаг|ошибка|error|traceback|exception|баг|bug|crash|падает)\b", re.I),
+     ["Planner", "Debugger", "Coder", "Auditor"]),
+    # Documentation
+    (re.compile(r"\b(документац|readme|changelog|docs|документируй|describe|опиши\s+архитектур)\b", re.I),
+     ["Planner", "Doc_Writer", "Archivist"]),
 ]
 
 # Regex for detecting any URL in a prompt — used for pre-flight chain validation
 _URL_PATTERN = re.compile(r"https?://", re.I)
 
 # Roles considered tool-capable for URL/fetch tasks
-_TOOL_CAPABLE_ROLES = frozenset(["Researcher", "Executor_Tools"])
+_TOOL_CAPABLE_ROLES = frozenset(["Researcher", "Executor_Tools", "Debugger"])
 
 # v15.0: Vague prompt indicators — prompts matching these need enrichment, not ask_user
 _VAGUE_INDICATORS = re.compile(
