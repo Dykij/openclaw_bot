@@ -4,7 +4,7 @@
 Запуск:
     python scripts/benchmark_deep_research.py
 
-Использует моки LLM/MCP, поэтому работает без запущенного vLLM.
+Использует моки LLM/MCP, поэтому работает без запущенного OpenRouter.
 Замеряет:
 - Время каждого шага pipeline
 - Суммарное время выполнения
@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ---------------------------------------------------------------------------
 # Конфигурация бенчмарка
 # ---------------------------------------------------------------------------
-SIMULATED_LLM_LATENCY_MS = 300   # ~300 мс на вызов LLM (эмуляция локального vLLM)
+SIMULATED_LLM_LATENCY_MS = 300   # ~300 мс на вызов LLM (эмуляция OpenRouter API)
 SIMULATED_TOKENS_PER_CALL = 256  # средний размер ответа LLM
 SIMULATED_WEB_FETCH_LATENCY_MS = 150  # задержка web_fetch (Jina Reader)
 
@@ -48,17 +48,16 @@ def make_mock_pipeline(version: str = "v2"):
 
     mcp = MagicMock()
     mcp.call_tool = AsyncMock(return_value=(
-        "1. **vLLM optimization techniques**\n"
+        "1. **LLM inference optimization techniques**\n"
         "   URL: https://arxiv.org/abs/2309.06180\n"
         "   Speculative decoding improves throughput by 2x.\n\n"
         "2. **PagedAttention**\n"
-        "   URL: https://vllm.ai/docs\n"
-        "   KV cache management for efficient memory use."
+        "   URL: https://openrouter.ai/docs\n"
+        "   Multi-model routing for efficient inference."
     ))
 
     from src.deep_research import DeepResearchPipeline
     pipeline = DeepResearchPipeline(
-        vllm_url="http://localhost:8000/v1",
         model="test-model",
         mcp_client=mcp,
     )
@@ -83,14 +82,14 @@ def make_mock_pipeline(version: str = "v2"):
             response = "medium"
         elif "декомпозиц" in system.lower() or "разбей" in system.lower():
             response = (
-                "speculative decoding vLLM optimization\n"
+                "speculative decoding LLM optimization\n"
                 "prefix caching KV cache reuse\n"
                 "chunked prefill GPU throughput\n"
                 "AWQ quantization 16GB VRAM\n"
             )
         elif "переформул" in system.lower() or "планировщик" in system.lower():
             response = (
-                "vLLM memory optimization techniques\n"
+                "LLM memory optimization techniques\n"
                 "GPU inference speed improvements\n"
             )
         elif "противоречи" in system.lower():
@@ -106,7 +105,7 @@ def make_mock_pipeline(version: str = "v2"):
                 "ОБОСНОВАНИЕ: Множество источников согласуются\n\n"
                 "ФАКТ: Prefix caching снижает TTFT в 3-5 раз\n"
                 "СТАТУС: ПОДТВЕРЖДЁН\n"
-                "ОБОСНОВАНИЕ: Описано в документации vLLM"
+                "ОБОСНОВАНИЕ: Описано в документации OpenRouter"
             )
         elif "оцени каждый" in system.lower() or "1-10" in system.lower():
             response = (
@@ -121,7 +120,7 @@ def make_mock_pipeline(version: str = "v2"):
                 "1. **Speculative Decoding** [1] — ускорение 30-100% TPS, нулевые затраты VRAM при n-gram режиме\n"
                 "2. **Prefix Caching** [2] — снижение TTFT в 3-5 раз для повторяющихся промптов\n"
                 "3. **Chunked Prefill** [3] — сглаживание ITL при длинных контекстах\n\n"
-                "ИСТОЧНИКИ:\n[1] vLLM: arXiv 2309.06180\n[2] SGLang arXiv 2312.07104\n[3] Sarathi-Serve arXiv 2308.16369"
+                "ИСТОЧНИКИ:\n[1] PagedAttention: arXiv 2309.06180\n[2] SGLang arXiv 2312.07104\n[3] Sarathi-Serve arXiv 2308.16369"
             )
         elif "критик" in system.lower():
             response = "none"

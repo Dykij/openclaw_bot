@@ -29,4 +29,4 @@ docker>=7.0
 # torch
 # cupy
 # llama-cpp-python
-# vllm
+# openrouter (cloud-only, no local inference)

@@ -1,10 +1,10 @@
-"""Benchmark vLLM token generation speed."""
+"""Benchmark OpenRouter API token generation speed."""
 import urllib.request
 import json
 import time
 
-URL = "http://localhost:8000/v1/completions"
-MODEL = "Qwen/Qwen2.5-Coder-14B-Instruct-AWQ"
+URL = "https://openrouter.ai/api/v1/completions"
+MODEL = "deepseek/deepseek-chat-v3-0324:free"
 
 PROMPTS = [
     "Write a Python function that implements binary search in a sorted array.",

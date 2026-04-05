@@ -329,7 +329,7 @@ async def run_test(pipeline, test: dict, test_index: int) -> dict:
 
 async def main() -> None:
     config = load_config()
-    vllm_url = config["system"].get("vllm_base_url", "http://localhost:8000/v1")
+    openrouter_url = config["system"].get("openrouter_base_url", "https://openrouter.ai/api/v1")
 
     print("\n" + "="*72)
     print("🚀 v14.8 COMPREHENSIVE BRIGADE STRESS TEST")
@@ -347,7 +347,7 @@ async def main() -> None:
     # 2. Create & initialise PipelineExecutor
     logger.info("Creating PipelineExecutor...")
     from src.pipeline._core import PipelineExecutor
-    pipeline = PipelineExecutor(config=config, vllm_url=vllm_url, vllm_manager=None)
+    pipeline = PipelineExecutor(config=config)
     await pipeline.initialize()
     logger.info("PipelineExecutor initialised OK")
 

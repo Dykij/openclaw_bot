@@ -22,7 +22,7 @@ Write-Host "Building llama-cpp-python with Flash Attention 2 and sm_120..."
 $env:CMAKE_ARGS = "-DGGML_CUDA=on -DGGML_CUDA_FA=on -DCMAKE_CUDA_ARCHITECTURES=120"
 pip install llama-cpp-python --no-cache-dir --verbose
 
-Write-Host "Installing vLLM (with NVFP4/MXFP4 support)..."
-pip install vllm>=0.12.0
+Write-Host "Installing OpenRouter client dependencies..."
+pip install httpx aiohttp
 
 Write-Host "GPU dependencies installed successfully for Phase 14."

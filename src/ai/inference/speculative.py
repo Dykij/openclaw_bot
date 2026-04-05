@@ -2,8 +2,11 @@
 
 DEPRECATED (2025-07): These dataclass definitions are retained for reference only.
 The bot is now cloud-only (OpenRouter API) — use ``route_llm`` from
-``src.llm_gateway`` for all inference. Local inference optimisations
-are no longer used.
+``src.llm_gateway`` for all inference. vLLM CLI args and local inference
+optimisations are no longer used.
+
+References (historical):
+- vLLM: Efficient Memory Management for LLM Serving (arXiv:2309.06180)
 """
 
 from __future__ import annotations

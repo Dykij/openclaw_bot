@@ -32,7 +32,7 @@ OpenClaw — автономный ИИ-инженер, который проек
 ### Технологический стек
 
 - **Язык**: Python 3.14 (primary), Rust (core performance), TypeScript (web/CLI)
-- **LLM Backbone**: OpenRouter API (cloud, multi-model routing via SmartModelRouter)
+- **LLM Backbone**: OpenRouter API (cloud multi-model routing with tier-based failover)
 - **Фреймворк**: Собственный пайплайн (pipeline_utils.py), Brigade Policy, MCP Tools
 - **Хранение знаний**: KnowledgeStore + GraphEngine (graph-RAG)
 - **Безопасность**: Sandbox L1-L4, OWASP-aligned Auditor

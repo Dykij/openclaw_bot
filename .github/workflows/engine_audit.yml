@@ -1,9 +1,9 @@
 name: Engine Audit & Model Integrity
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
 
 jobs:
   audit_algorithms:
@@ -40,7 +40,7 @@ jobs:
       - name: Execute Deterministic Event-Replay Backtester
         run: |
           # Run against Gold Standard SQLite offline dataset to verify mathematical logic degradation
-          # Mocks out the QuestDB/vLLM requirement for CI runners
+          # Mocks out the QuestDB requirement for CI runners (cloud-only LLM via OpenRouter)
           export RUNNING_IN_CI=1
           export PYTHONPATH=$PYTHONPATH:.
 

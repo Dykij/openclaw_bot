@@ -1,4 +1,4 @@
-"""Single pipeline step executor + OpenRouter inference routing.
+"""Single pipeline step executor + vLLM inference routing.
 
 Extracted from _core.py for modularity.
 """

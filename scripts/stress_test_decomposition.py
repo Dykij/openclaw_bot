@@ -122,11 +122,11 @@ for name, task, expected_substr in routing_tests:
 print("\n=== 3. AdaptiveTokenBudget (16k) ===")
 from src.ai.inference.budget import AdaptiveTokenBudget
 
-vllm_max = cfg.get("system", {}).get("vllm_max_model_len", 8192)
+max_model_len = cfg.get("system", {}).get("max_model_len", 16384)
 t0 = time.perf_counter()
-budget = AdaptiveTokenBudget(default_max_tokens=vllm_max)
+budget = AdaptiveTokenBudget(default_max_tokens=max_model_len)
 dt = (time.perf_counter() - t0) * 1000
-log_result("budget:init_16k", vllm_max == 16384, dt, f"max_tokens={vllm_max}")
+log_result("budget:init_16k", max_model_len == 16384, dt, f"max_tokens={max_model_len}")
 
 for task_type in ["general", "code", "research", "creative"]:
     t0 = time.perf_counter()
@@ -157,8 +157,8 @@ for pkg, expected_files in decomposed_packages.items():
 print("\n=== 5. Config Consistency ===")
 t0 = time.perf_counter()
 checks = []
-if vllm_max != 16384:
-    checks.append(f"vllm_max_model_len={vllm_max}, expected 16384")
+if max_model_len != 16384:
+    checks.append(f"max_model_len={max_model_len}, expected 16384")
 code_model = router_cfg.get("code", "")
 if "qwen" not in code_model.lower():
     checks.append(f"code model={code_model}, expected qwen")

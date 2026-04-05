@@ -2,19 +2,21 @@
 
 ## OpenRouter API Connection
 
-Бот использует OpenRouter API для облачного LLM-инференса.
+OpenRouter — основной провайдер LLM инференса (cloud-only).
 
 **Конфигурация:**
 
-- OpenRouter API: настраивается в `config/openclaw_config.json` (секция `system.openrouter`)
-- Модели: облачные (multi-model routing через SmartModelRouter)
+- API URL: `https://openrouter.ai/api/v1`
+- Модели: тированные (fast/balanced/premium/reasoning)
+- Ключ: OPENROUTER_API_KEY в environment variables
 
 **Возможные проблемы:**
 
-1. Rate limit exceeded → включается retry с exponential backoff
-2. API key невалидный → проверить `OPENROUTER_API_KEY` в `.env`
-3. Модель недоступна → SmartModelRouter переключится на fallback модель
+1. Rate-limit → SmartModelRouter автоматически переключает модель
+2. 401 Unauthorized → проверить OPENROUTER_API_KEY
+3. Таймаут → проверить https://openrouter.ai/status
+4. Модель недоступна → проверить доступность на https://openrouter.ai/models
 
-## Legacy: Local Inference (deprecated)
+## Legacy: Ollama Windows to WSL Connection (deprecated)
 
-Локальный инференс больше не используется — миграция на cloud-only (OpenRouter) завершена.
+Данная секция сохранена для справки. Локальные модели удалены — миграция на OpenRouter завершена 2026-04.

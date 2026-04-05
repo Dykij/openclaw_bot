@@ -3,6 +3,7 @@
 ## Current Architecture (v2 — MAS + OpenRouter Primary)
 
 - **Primary LLM Provider:** OpenRouter API (cloud, multi-model routing)
+- **LLM Provider:** OpenRouter API (cloud, multi-model routing with automatic failover)
 - **Orchestration:** Multi-Agent System (MAS) — autonomous agent lifecycle with AgentOrchestrator
 - **Memory:** SuperMemory (RAG + TieredMemory + EpisodicMemory + ChromaDB) — persistent cross-session context
 - **Integration:** ClawHub platform connector for skills/tasks marketplace
@@ -10,7 +11,7 @@
 ## Active Components
 
 - **AgentOrchestrator** (`src/mas/orchestrator.py`): manages agent lifecycle, task routing, autonomous loop
-- **OpenRouter Client** (`src/openrouter_client.py`): primary cloud inference with rate-limit tracking and retry logic
+- **OpenRouter Client** (`src/openrouter_client.py`): cloud inference with rate-limit tracking, multi-model failover
 - **Unified LLM Gateway** (`src/llm_gateway.py`): single entry point `route_llm()` for all inference — SmartModelRouter, TokenBudget, Metrics, Circuit Breaker
 - **SmartModelRouter** (`src/ai/inference/router.py`): tier-based routing (fast/balanced/premium/reasoning) per task type — replaces legacy ModelSelector
 - **SuperMemory** (`src/supermemory.py`): unified RAG + tiered memory (hot/warm/cold) + episodic recall + SQLite persistence + decay scheduling
@@ -37,7 +38,7 @@
 
 ## Recent Changes (2026-03-25):
 
-- Transitioned to OpenRouter as primary LLM provider (cloud-only architecture)
+- Transitioned to OpenRouter as sole LLM provider (cloud-only architecture)
 - Implemented MAS (Multi-Agent System) orchestrator for autonomous agent lifecycle
 - Created SuperMemory system (RAG + TieredMemory fusion with cross-session persistence)
 - Added ClawHub platform integration module
@@ -47,8 +48,8 @@
 
 ## Previous State (archived):
 
-- Previously used local inference (removed in cloud-only migration)
-- Context Bridge (3-layer: Summary→SQLite→ChromaDB) — archived
+- Legacy local inference removed — all inference via OpenRouter cloud API
+- Context Bridge (3-layer: Summary→SQLite→ChromaDB) for model context swaps
 
 ## Models (OpenRouter Primary):
 
@@ -56,8 +57,10 @@
 - **balanced:** nvidia/nemotron-3-super-120b-a12b:free
 - **premium:** deepseek/deepseek-chat-v3-0324:free, qwen/qwen-2.5-coder-32b-instruct:free
 - **reasoning:** deepseek/deepseek-r1:free
+- **fallback:** OpenRouter automatic model failover (tier-based)
 
-## Hardware:
+## Infrastructure:
 
-- RTX 5060 Ti 16GB
+- OpenRouter cloud API (multi-model, auto-failover)
+- Context Bridge: SQLite fact store (data/context_bridge.db) + ChromaDB embeddings
 - SuperMemory persistence: data/supermemory/

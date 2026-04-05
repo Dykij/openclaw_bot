@@ -22,8 +22,8 @@ async def cmd_tailscale(gateway, message: Message):
     await message.reply(msg, parse_mode="HTML")
 
 
-async def cmd_test(gateway, message: Message):
-    if message.from_user.id != gateway.admin_id:
+async def cmd_test(gateway, message: Message, from_callback: bool = False):
+    if not from_callback and message.from_user.id != gateway.admin_id:
         return
 
     await message.reply(

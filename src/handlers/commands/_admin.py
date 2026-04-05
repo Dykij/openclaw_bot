@@ -27,12 +27,12 @@ async def handle_callback_query(gateway, callback: CallbackQuery):
     elif action == "cmd_test":
         await callback.answer("Запускаю тест моделей...")
         from src.handlers.commands._tools import cmd_test
-        await cmd_test(gateway, callback.message)
+        await cmd_test(gateway, callback.message, from_callback=True)
     elif action == "cmd_history":
-        await cmd_history(gateway, callback.message)
+        await cmd_history(gateway, callback.message, from_callback=True)
         await callback.answer()
     elif action == "cmd_perf":
-        await cmd_perf(gateway, callback.message)
+        await cmd_perf(gateway, callback.message, from_callback=True)
         await callback.answer()
     else:
         await callback.answer()
@@ -103,7 +103,7 @@ async def cmd_start(gateway, message: Message):
 
 
 async def cmd_status(gateway, message: Message, from_callback: bool = False):
-    if message.from_user.id != gateway.admin_id:
+    if not from_callback and message.from_user.id != gateway.admin_id:
         return
 
     total_roles = sum(len(brigade["roles"]) for brigade in gateway.config["brigades"].values())
@@ -167,9 +167,9 @@ async def cmd_models(gateway, message: Message, from_callback: bool = False):
         await message.reply(models_msg, parse_mode="Markdown", reply_markup=keyboard)
 
 
-async def cmd_history(gateway, message: Message):
+async def cmd_history(gateway, message: Message, from_callback: bool = False):
     """Show recent pipeline execution history."""
-    if message.from_user.id != gateway.admin_id:
+    if not from_callback and message.from_user.id != gateway.admin_id:
         return
 
     history = getattr(gateway, '_pipeline_history', [])
@@ -199,9 +199,9 @@ async def cmd_history(gateway, message: Message):
         await message.reply(msg.replace("*", "").replace("`", ""))
 
 
-async def cmd_perf(gateway, message: Message):
+async def cmd_perf(gateway, message: Message, from_callback: bool = False):
     """Show inference performance metrics."""
-    if message.from_user.id != gateway.admin_id:
+    if not from_callback and message.from_user.id != gateway.admin_id:
         return
 
     metrics = getattr(gateway, '_perf_metrics', [])
