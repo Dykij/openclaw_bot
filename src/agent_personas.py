@@ -34,7 +34,17 @@ class AgentPersona:
     file_path: str = ""
 
 
-# Role-to-persona mapping for automatic persona augmentation
+# Role-to-persona mapping for automatic persona augmentation.
+# Each pipeline role maps to the agents/ persona slug that best augments it:
+#   Auditor → security-auditor (security domain expertise)
+#   Executor_Architect/Integration → backend-architect (system design)
+#   Coder → senior-developer (full-stack coding practices)
+#   Test_Writer → qa-engineer (testing methodology)
+#   Doc_Writer → technical-writer (documentation standards)
+#   Debugger → code-reviewer (diagnostic/review skills)
+#   Foreman → project-manager (task decomposition)
+#   Executor_Tools → devops-engineer (tooling/infra)
+#   Researcher → ml-engineer (research methodology)
 _ROLE_PERSONA_MAP: Dict[str, str] = {
     "Auditor": "security-auditor",
     "Executor_Architect": "backend-architect",

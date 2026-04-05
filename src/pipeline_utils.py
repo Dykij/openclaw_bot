@@ -67,6 +67,7 @@ def group_chain_cloud(chain_list: list[str]) -> list[tuple[str, ...]]:
                 parallel_batch = []
             groups.append((role,))
         elif role in _PARALLELIZABLE_ROLES or role.startswith("Executor_"):
+            # startswith guard: future-proofs for new Executor_* roles not yet in the set
             parallel_batch.append(role)
         else:
             # Unknown role — keep sequential for safety
