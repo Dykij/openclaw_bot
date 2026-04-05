@@ -324,11 +324,9 @@ class TestSummarizerSequential:
 
     def test_summarizer_not_parallelizable_alone(self):
         from src.pipeline_utils import _PARALLELIZABLE_ROLES
-        # Summarizer IS in the set — it can be parallelized with Analyst
-        # when context is properly injected. This is safe for cloud mode.
-        # Note: Summarizer processes independently in cloud mode since
-        # each parallel role gets the same context_briefing.
-        assert "Summarizer" not in _PARALLELIZABLE_ROLES or True  # Design decision
+        # Summarizer is NOT in _PARALLELIZABLE_ROLES because it depends
+        # on prior Researcher/Analyst output and must run sequentially.
+        assert "Summarizer" not in _PARALLELIZABLE_ROLES
 
     def test_auditor_is_sequential(self):
         from src.pipeline_utils import _SEQUENTIAL_ROLES
