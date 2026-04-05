@@ -54,6 +54,8 @@ def route_subtask(text: str) -> str:
     scores: Dict[str, int] = {}
     for brigade, keywords in _BRIGADE_KEYWORDS.items():
         scores[brigade] = sum(1 for kw in keywords if kw in lower)
+    if not scores:
+        return "OpenClaw-Core"
     best = max(scores, key=scores.get)  # type: ignore[arg-type]
     return best if scores[best] > 0 else "OpenClaw-Core"
 

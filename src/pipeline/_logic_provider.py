@@ -54,10 +54,10 @@ def record_learning(task: str, error: str, fix: str):
     """Append a learning entry to Learning_Log.md as a Markdown table row."""
     _ensure_dirs()
     try:
-        # One line markdown strip
-        task_clean = task.replace('\n', ' ').replace('|', '\\|')[:200]
-        error_clean = error.replace('\n', ' ').replace('|', '\\|')[:500] if error else "Success"
-        fix_clean = fix.replace('\n', ' ').replace('|', '\\|')[:500]
+        # Sanitize inputs FIRST, then do markdown escape as last step
+        task_clean = task.replace('\n', ' ')[:200].replace('|', '\\|')
+        error_clean = (error.replace('\n', ' ')[:500] if error else "Success").replace('|', '\\|')
+        fix_clean = fix.replace('\n', ' ')[:500].replace('|', '\\|')
         tag = "[Logic]"
         check_text = f"{error_clean} {task_clean}".lower()
         # v16.2 Fast Classifier: Regex/Keyword patterns
@@ -205,9 +205,11 @@ def get_instruction_override(prompt: str) -> Tuple[Optional[List[str]], str]:
     return None, ""
 
 def _tokenize(text: str) -> set:
+    # Limit input length before regex to avoid ReDoS on very long strings
+    truncated = text[:10000] if len(text) > 10000 else text
     # [^\W_]+ splits on underscores and non-alphanumeric so filenames like
     # "Dmarket_Core.md" correctly yield {"dmarket", "core"} not {"dmarket_core"}.
-    words = re.findall(r'[^\W_]+', text.lower())
+    words = re.findall(r'[^\W_]+', truncated.lower())
     return set(w for w in words if len(w) > 3)
 
 def get_neural_connection(prompt: str) -> str:
@@ -216,6 +218,9 @@ def get_neural_connection(prompt: str) -> str:
     obsidian_root = OBSIDIAN_DIR
     if not os.path.exists(obsidian_root):
         return ""
+    
+    # Resolve to real path for traversal protection
+    obsidian_root_resolved = os.path.realpath(obsidian_root)
     
     prompt_tokens = _tokenize(prompt)
     if not prompt_tokens:
@@ -235,15 +240,30 @@ def get_neural_connection(prompt: str) -> str:
         global_protocols = "\n\n[GLOBAL VAULT PROTOCOLS]" + global_protocols
     
     best_matches = []
+    _MAX_WALK_DEPTH = 5
+    _MAX_FILES_SCANNED = 200
+    _files_scanned = 0
     for root_dir, dirs, files in os.walk(obsidian_root):
+        # Depth limit to prevent unbounded traversal
+        depth = root_dir.replace(obsidian_root, "").count(os.sep)
+        if depth >= _MAX_WALK_DEPTH:
+            dirs.clear()  # stop descending
+            continue
         # Exclude internal logic directories and git
         if "claw_logic" in root_dir or ".git" in root_dir:
             continue
         for f in files:
+            if _files_scanned >= _MAX_FILES_SCANNED:
+                break
             if not f.endswith(".md"): continue
             if f == "Learning_Log.md": continue
             
             fpath = os.path.join(root_dir, f)
+            # Path traversal protection: ensure file is inside obsidian_root
+            fpath_resolved = os.path.realpath(fpath)
+            if not fpath_resolved.startswith(obsidian_root_resolved):
+                continue
+            _files_scanned += 1
             try:
                 with open(fpath, "r", encoding="utf-8") as file_obj:
                     content = file_obj.read()
@@ -261,6 +281,8 @@ def get_neural_connection(prompt: str) -> str:
                     best_matches.append((score, f, rel_path, content))
             except Exception:
                 pass
+        if _files_scanned >= _MAX_FILES_SCANNED:
+            break
 
     best_matches.sort(key=lambda x: x[0], reverse=True)
     top_matches = best_matches[:2] # Top 2 matches

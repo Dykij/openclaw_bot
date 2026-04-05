@@ -138,4 +138,7 @@ async def ensemble_vote(
     except Exception as e:
         logger.warning("Ensemble Auditor failed, using longest candidate", error=str(e))
 
-    return max(candidates, key=len)
+    # Fallback: return longest (most complete) candidate
+    if candidates:
+        return max(candidates, key=len)
+    return ""

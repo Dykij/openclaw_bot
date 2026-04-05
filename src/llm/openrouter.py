@@ -270,11 +270,18 @@ async def call_openrouter(
                         last_error = f"HTTP {resp.status}: {error_body[:300]}"
                         try:
                             from src.llm.gateway import _last_api_error
+                            # Sanitize error body to avoid leaking API keys or auth tokens
+                            _sanitized_body = re.sub(
+                                r'(Bearer\s+|api[_-]?key["\s:=]+)[^\s"]+',
+                                r'\1[REDACTED]',
+                                error_body[:1000],
+                                flags=re.IGNORECASE,
+                            )
                             _last_api_error.update({
                                 "status": resp.status,
                                 "model": current_model,
                                 "endpoint": f"{base_url}/chat/completions",
-                                "body": error_body[:1000],
+                                "body": _sanitized_body,
                                 "role": role_name,
                                 "attempt": attempt + 1,
                             })

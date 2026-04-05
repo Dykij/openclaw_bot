@@ -228,7 +228,7 @@ class BenchmarkScorer:
         # 1. Length check (weight: 0.15)
         w = 0.15
         total_weight += w
-        resp_len = len(response.strip())
+        resp_len = len((response or "").strip())
         if resp_len < task.min_length:
             score = max(0.0, resp_len / task.min_length)
         elif resp_len > task.max_length:
@@ -242,7 +242,7 @@ class BenchmarkScorer:
         if task.required_keywords:
             w = 0.25
             total_weight += w
-            found = sum(1 for kw in task.required_keywords if kw.lower() in response.lower())
+            found = sum(1 for kw in task.required_keywords if kw.lower() in (response or "").lower())
             score = found / len(task.required_keywords)
             breakdown["keywords"] = round(score, 3)
             weighted_sum += w * score

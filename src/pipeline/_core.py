@@ -9,7 +9,6 @@ and tool execution to _tools_handler.py.
 
 import asyncio
 import json
-import logging
 import os
 import re
 import time
@@ -125,6 +124,8 @@ def _route_subtask(text: str) -> str:
     scores: dict[str, int] = {}
     for brigade, keywords in _BRIGADE_KEYWORDS.items():
         scores[brigade] = sum(1 for kw in keywords if kw in lower)
+    if not scores:
+        return "OpenClaw-Core"
     best = max(scores, key=scores.get)  # type: ignore[arg-type]
     return best if scores[best] > 0 else "OpenClaw-Core"
 
@@ -509,8 +510,9 @@ class PipelineExecutor:
                     # v15.4: Leakage containment — if the best answer itself
                     # contains planning preamble, wrap the entire preamble in
                     # <think> so prompt_handler strips it before the user sees it.
+                    # ReDoS-safe: bounded quantifiers instead of unbounded .*?
                     _PLANNING_RE = re.compile(
-                        r"^((?:.*?(?:Approach\s*#\d|Plan\s*:|Подход\s*#?\d|План\s*:).*?\n)+)",
+                        r"^((?:.{0,500}(?:Approach\s{0,5}#\d|Plan\s{0,5}:|Подход\s{0,5}#?\d|План\s{0,5}:).{0,500}\n){1,20})",
                         re.IGNORECASE | re.DOTALL,
                     )
                     _plan_m = _PLANNING_RE.match(_lats_answer)
@@ -916,9 +918,9 @@ class PipelineExecutor:
 
                 # --- v16.4: General step error detection + self-healing retry ---
                 if not _autoheal_used and response:
-                    _resp_lower = (response or "").lower()
+                    _resp_lower = response.lower() if response else ""
                     _has_error_markers = (
-                        response.startswith("⚠️")
+                        (response and response.startswith("⚠️"))
                         or "traceback" in _resp_lower
                         or "exception:" in _resp_lower
                         or "error:" in _resp_lower
@@ -1071,10 +1073,17 @@ class PipelineExecutor:
                     f"✅ Шаг {step_index + 1}/{len(chain)} ({role_name}) завершён. Передаю контекст дальше..."
                 )
 
+            # Git auto-commit moved to background thread to avoid blocking the event loop
             try:
                 import subprocess
                 commit_msg = f"Auto-commit [PoW]: Pipeline step {role_name} ({model}) completed"
-                subprocess.run(["git", "commit", "-am", commit_msg], cwd=os.path.dirname(__file__), capture_output=True)
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "commit", "-am", commit_msg],
+                    cwd=os.path.dirname(__file__),
+                    capture_output=True,
+                    timeout=10,
+                )
             except Exception as e:
                 logger.debug(f"Git auto-commit failed: {e}")
 
@@ -1121,7 +1130,14 @@ class PipelineExecutor:
             # --- v11.7: MARCH hallucination cross-verification ---
             if self._supermemory and len(steps_results) >= 2:
                 try:
-                    executor_resp = steps_results[-2]["response"] if len(steps_results) >= 2 else ""
+                    # Find executor role response (not just [-2] which may be wrong role)
+                    executor_resp = ""
+                    for sr in reversed(steps_results[:-1]):
+                        if sr.get("role", "").startswith("Executor_") or sr.get("role") == "Coder":
+                            executor_resp = sr["response"]
+                            break
+                    if not executor_resp:
+                        executor_resp = steps_results[-2]["response"] if len(steps_results) >= 2 else ""
                     archivist_resp = final_response
                     march_result = await self._march_protocol.cross_verify_agents(
                         executor_response=executor_resp,
@@ -1369,7 +1385,9 @@ class PipelineExecutor:
             logger.warning("Ensemble Auditor failed, using longest candidate", error=str(e))
 
         # Last resort: return longest (most complete) candidate
-        return max(candidates, key=len)
+        if candidates:
+            return max(candidates, key=len)
+        return ""
 
     async def _call_llm(self, model, system_prompt, user_prompt, role_name, role_config, mcp_client, preserve_think=False, json_schema=None) -> str:
         or_model = role_config.get("openrouter_model")

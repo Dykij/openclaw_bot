@@ -209,6 +209,8 @@ class LATSEngine:
                 if candidates:
                     best_cand = max(candidates, key=lambda n: n.score)
                     next_level_nodes.append(best_cand)
+                else:
+                    logger.debug("lats_select: no candidates at depth", depth=depth)
                     logger.info(
                         "lats_select",
                         depth=depth,

@@ -41,10 +41,10 @@ _metrics_collector = None
 _configured: bool = False
 
 # ---------------------------------------------------------------------------
-# HITL (Human-in-the-Loop) Approval Gate — extracted to src/hitl_approval.py
+# HITL (Human-in-the-Loop) Approval Gate — extracted to src/llm/hitl.py
 # Re-exported here for backward compatibility.
 # ---------------------------------------------------------------------------
-import src.hitl_approval as _hitl_mod
+import src.llm.hitl as _hitl_mod
 from src.llm.hitl import (
     ApprovalRequest,
     assess_risk,
@@ -443,11 +443,19 @@ async def _call_openrouter(
 
                     # Capture full error details for debug reporting
                     error_body = await resp.text()
+                    # Sanitize to avoid leaking auth tokens in stored error state
+                    import re as _re
+                    _sanitized = _re.sub(
+                        r'(Bearer\s+|api[_-]?key["\s:=]+)[^\s"]+',
+                        r'\1[REDACTED]',
+                        error_body[:1000],
+                        flags=_re.IGNORECASE,
+                    )
                     _last_api_error.update({
                         "status": resp.status,
                         "model": model,
                         "endpoint": endpoint,
-                        "body": error_body[:1000],
+                        "body": _sanitized,
                         "attempt": attempt + 1,
                     })
                     logger.warning(
