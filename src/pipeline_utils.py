@@ -40,7 +40,7 @@ _PARALLELIZABLE_ROLES = {
     "Executor_Architect", "Executor_Tools", "Executor_Integration",
     "Coder", "Researcher", "Analyst",
     "Archivist", "State_Manager", "Test_Writer",
-    "Debugger", "Doc_Writer", "Summarizer",
+    "Debugger", "Doc_Writer",
 }
 
 
