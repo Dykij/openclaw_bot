@@ -383,6 +383,7 @@ class SkillLibrary:
         self._dir = base_dir
         self._index_path = os.path.join(self._dir, "index.json")
         self._skills: Dict[str, LocalSkill] = {}
+        self._dirty = False  # track unsaved changes
         self._ensure_dir()
         self._load_index()
 
@@ -411,8 +412,18 @@ class SkillLibrary:
                     ensure_ascii=False,
                     indent=2,
                 )
+            self._dirty = False
         except Exception as e:
             logger.warning("Failed to save skill index", error=str(e))
+
+    def _mark_dirty(self) -> None:
+        """Mark index as needing a flush. Use flush() to persist."""
+        self._dirty = True
+
+    def flush(self) -> None:
+        """Persist any pending changes to disk. Call after batch operations."""
+        if self._dirty:
+            self._save_index()
 
     def save_skill(
         self,
@@ -420,15 +431,24 @@ class SkillLibrary:
         description: str,
         code: str,
         language: str = "python",
+        *,
+        defer_flush: bool = False,
     ) -> LocalSkill:
-        """Persist a successfully-tested script as a reusable skill."""
+        """Persist a successfully-tested script as a reusable skill.
+
+        Args:
+            defer_flush: If True, skip disk write — caller must call flush() later.
+                         Useful for batch imports.
+        """
         script_hash = hashlib.sha256(code.encode()).hexdigest()
         skill_id = f"skill_{script_hash[:12]}"
 
         # Dedup: if same hash exists, increment success counter
         if skill_id in self._skills:
             self._skills[skill_id].success_count += 1
-            self._save_index()
+            self._mark_dirty()
+            if not defer_flush:
+                self._save_index()
             logger.info("Skill already exists, incremented success", skill_id=skill_id)
             return self._skills[skill_id]
 
@@ -448,7 +468,9 @@ class SkillLibrary:
             success_count=1,
         )
         self._skills[skill_id] = skill
-        self._save_index()
+        self._mark_dirty()
+        if not defer_flush:
+            self._save_index()
         logger.info("New skill saved", skill_id=skill_id, name=name)
         return skill
 

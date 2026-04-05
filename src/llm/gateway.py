@@ -87,6 +87,11 @@ def configure(config: Dict[str, Any]) -> None:
     _approval_config.update(config.get("hitl", {}))
 
     or_cfg = config.get("system", {}).get("openrouter", {})
+    # Resolve ${ENV_VAR} templates in api_key (config stores placeholder)
+    raw_key = or_cfg.get("api_key", "")
+    if raw_key.startswith("${") and raw_key.endswith("}"):
+        env_name = raw_key[2:-1]
+        or_cfg["api_key"] = os.environ.get(env_name, "")
     _openrouter_config = or_cfg
 
     # --- SmartModelRouter ---

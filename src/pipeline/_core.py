@@ -204,6 +204,43 @@ async def _async_save_trajectory(supermemory, prompt, chain, complexity, steps_r
         logger.debug("Complementary RL: trajectory save non-fatal error", error=str(_err))
 
 
+# ---------------------------------------------------------------------------
+# Module-level singleton cache: avoids re-creating heavy objects per PipelineExecutor
+# ---------------------------------------------------------------------------
+_shared_sandbox: Optional[DynamicSandbox] = None
+_shared_react: Optional[ReActReasoner] = None
+_shared_constitutional: Optional[ConstitutionalChecker] = None
+_shared_march: Optional[MARCHProtocol] = None
+
+
+def _get_shared_sandbox() -> DynamicSandbox:
+    global _shared_sandbox
+    if _shared_sandbox is None:
+        _shared_sandbox = DynamicSandbox()
+    return _shared_sandbox
+
+
+def _get_shared_react() -> ReActReasoner:
+    global _shared_react
+    if _shared_react is None:
+        _shared_react = ReActReasoner(model="")
+    return _shared_react
+
+
+def _get_shared_constitutional() -> ConstitutionalChecker:
+    global _shared_constitutional
+    if _shared_constitutional is None:
+        _shared_constitutional = ConstitutionalChecker(model="")
+    return _shared_constitutional
+
+
+def _get_shared_march() -> MARCHProtocol:
+    global _shared_march
+    if _shared_march is None:
+        _shared_march = MARCHProtocol()
+    return _shared_march
+
+
 class PipelineExecutor:
     """
     Executes a chain of agent roles sequentially, passing compressed
@@ -256,16 +293,16 @@ class PipelineExecutor:
         # SmartModelRouter (delegated to _state.py)
         self._smart_router = init_smart_router(config, self.force_cloud)
 
-        self._react_reasoner = ReActReasoner(model="")
-        self._constitutional = ConstitutionalChecker(model="")
-        self._sandbox = DynamicSandbox()
+        self._react_reasoner = _get_shared_react()
+        self._constitutional = _get_shared_constitutional()
+        self._sandbox = _get_shared_sandbox()
 
         # v11.7: LATS tree search + MARCH hallucination control
         lats_model = self.config.get("model_router", {}).get(
             "research", "meta-llama/llama-3.3-70b-instruct:free"
         )
         self._lats_engine = LATSEngine(model=lats_model)
-        self._march_protocol = MARCHProtocol()
+        self._march_protocol = _get_shared_march()
 
         # v13.2: AFlow dynamic chain generator
         aflow_model = self.config.get("system", {}).get("model_router", {}).get(
