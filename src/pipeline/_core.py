@@ -43,6 +43,7 @@ from src.pipeline_utils import (
     compress_for_next_step,
     emergency_compress,
     group_chain,
+    group_chain_cloud,
     sanitize_file_content,
 )
 from src.code_validator import CodeValidator
@@ -211,9 +212,12 @@ async def _async_save_trajectory(supermemory, prompt, chain, complexity, steps_r
 
 class PipelineExecutor:
     """
-    Executes a chain of agent roles sequentially, passing compressed
-    context between each step. Uses vLLM (OpenAI-compatible local server)
-    for all inference calls. Model swapping managed by VLLMModelManager.
+    Executes a chain of agent roles, passing compressed context between
+    each step. Supports both local vLLM and cloud-only (OpenRouter) modes.
+
+    Cloud-only mode (force_cloud=True): no model swapping delays, no VRAM
+    protection, no Context Bridge overhead. Roles can use different models
+    simultaneously via OpenRouter without waiting for model loading.
     """
 
     def __init__(self, config: Dict[str, Any], vllm_url: str, vllm_manager=None):
@@ -699,7 +703,14 @@ class PipelineExecutor:
         except Exception as _fk_err:
             logger.debug("Fresh knowledge hook failed", error=str(_fk_err))
 
-        chain_groups = group_chain(chain)
+        # v18.0: Use cloud-optimized grouping in force_cloud mode.
+        # Cloud mode can parallelize independent roles since there's no
+        # model loading delay — all roles use OpenRouter simultaneously.
+        if self.force_cloud:
+            chain_groups = group_chain_cloud(chain)
+            logger.info("Cloud-optimized chain grouping", groups=[list(g) for g in chain_groups])
+        else:
+            chain_groups = group_chain(chain)
         steps_results = []
         context_briefing = memory_context
         step_index = 0

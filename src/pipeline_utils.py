@@ -31,6 +31,55 @@ def group_chain(chain_list: list[str]) -> list[tuple[str, ...]]:
     return groups
 
 
+# v18.0: Roles that MUST run sequentially because later roles depend on prior output.
+# Planner must run first, Auditor must run last, Foreman depends on Planner.
+_SEQUENTIAL_ROLES = {"Planner", "Foreman", "Auditor"}
+
+# Roles that can run in parallel (produce independent outputs for a given context)
+_PARALLELIZABLE_ROLES = {
+    "Executor_Architect", "Executor_Tools", "Executor_Integration",
+    "Coder", "Researcher", "Analyst",
+    "Archivist", "State_Manager", "Test_Writer",
+}
+
+
+def group_chain_cloud(chain_list: list[str]) -> list[tuple[str, ...]]:
+    """Cloud-optimized chain grouping: parallelizes independent roles.
+
+    In cloud-only mode (OpenRouter), there is no model loading delay,
+    so independent roles can be dispatched simultaneously.
+
+    Rules:
+    - Planner always runs first (alone)
+    - Auditor always runs last (alone)
+    - Consecutive parallelizable roles are batched together
+    - Sequential roles (Foreman) break the batch
+    """
+    groups: list[tuple[str, ...]] = []
+    parallel_batch: list[str] = []
+
+    for role in chain_list:
+        if role in _SEQUENTIAL_ROLES:
+            # Flush any pending parallel batch
+            if parallel_batch:
+                groups.append(tuple(parallel_batch))
+                parallel_batch = []
+            groups.append((role,))
+        elif role in _PARALLELIZABLE_ROLES or role.startswith("Executor_"):
+            parallel_batch.append(role)
+        else:
+            # Unknown role — keep sequential for safety
+            if parallel_batch:
+                groups.append(tuple(parallel_batch))
+                parallel_batch = []
+            groups.append((role,))
+
+    if parallel_batch:
+        groups.append(tuple(parallel_batch))
+
+    return groups
+
+
 def clean_response_for_user(text: str) -> str:
     """Strip internal STAR markup, <think> blocks, MCP artifacts, and process confidence tags."""
     # Remove <think>...</think> blocks (closed + unclosed fallback)
