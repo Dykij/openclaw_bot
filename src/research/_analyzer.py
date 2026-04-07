@@ -74,8 +74,11 @@ async def detect_contradictions(
     research_context: List[str],
     question: str,
     evidence: List[str],
-) -> List[str]:
-    """Detect contradictions between evidence pieces."""
+) -> List[Dict[str, Any]]:
+    """Detect contradictions between evidence pieces with severity levels.
+
+    v7: returns structured dicts with severity (high/medium/low) instead of raw strings.
+    """
     if len(evidence) < 2:
         return []
     evidence_text = "\n---\n".join(e[:400] for e in evidence[:10])
@@ -83,8 +86,13 @@ async def detect_contradictions(
         system=(
             "Ты — детектор противоречий. Проанализируй все доказательства и "
             "найди утверждения которые ПРОТИВОРЕЧАТ друг другу. "
-            "Для каждого противоречия напиши:\n"
-            "ПРОТИВОРЕЧИЕ: <источник A> утверждает X, а <источник B> утверждает Y\n"
+            "Для каждого противоречия напиши СТРОГО в формате:\n"
+            "SEVERITY: high|medium|low\n"
+            "ПРОТИВОРЕЧИЕ: <источник A> утверждает X, а <источник B> утверждает Y\n\n"
+            "Severity levels:\n"
+            "- high: ключевые факты прямо противоречат (влияют на выводы)\n"
+            "- medium: числовые расхождения или разные интерпретации\n"
+            "- low: стилистические различия или несущественные расхождения\n"
             "Если противоречий нет — ответь 'none'."
         ),
         user=f"ВОПРОС: {question}\n\nДОКАЗАТЕЛЬСТВА:\n{evidence_text}",
@@ -92,13 +100,30 @@ async def detect_contradictions(
     )
     if result.strip().lower() in ("none", "нет"):
         return []
-    contradictions = [
-        line.strip() for line in result.split("\n")
-        if line.strip() and "ПРОТИВОРЕЧИЕ" in line.upper()
-    ]
+
+    contradictions: List[Dict[str, Any]] = []
+    lines = result.split("\n")
+    current_severity = "medium"  # default
+    for line in lines:
+        stripped = line.strip()
+        # Parse severity line
+        sev_match = re.match(r"SEVERITY:\s*(high|medium|low)", stripped, re.I)
+        if sev_match:
+            current_severity = sev_match.group(1).lower()
+            continue
+        # Parse contradiction line
+        if "ПРОТИВОРЕЧИЕ" in stripped.upper():
+            text = re.sub(r"^ПРОТИВОРЕЧИЕ\s*:\s*", "", stripped, flags=re.I)
+            contradictions.append({
+                "text": text or stripped,
+                "severity": current_severity,
+            })
+            current_severity = "medium"  # reset for next
+
     if contradictions:
+        high = sum(1 for c in contradictions if c["severity"] == "high")
         research_context.append(
-            f"Обнаружено {len(contradictions)} противоречий в доказательствах."
+            f"Обнаружено {len(contradictions)} противоречий ({high} критических)."
         )
     return contradictions
 
@@ -108,45 +133,77 @@ async def estimate_confidence(
     question: str,
     report: str,
     evidence: List[str],
+    contradictions: List[Any] | None = None,
 ) -> float:
-    """Estimate confidence in the current report (0.0-1.0).
+    """Hybrid confidence estimation (0.0-1.0).
 
-    v5: uses evidence count and diversity as calibration factors.
+    v7: combines heuristic signals with optional LLM calibration.
+    Heuristic-dominant approach — LLM score is just one of 5 signals,
+    so free model overconfidence doesn't break adaptive stopping.
     """
-    # v5: count unique source types in evidence text
+    # --- Signal 1: evidence volume (0.0-1.0) ---
+    ev_count = len(evidence)
+    volume_score = min(ev_count / 12.0, 1.0)  # 12+ pieces → max
+
+    # --- Signal 2: source diversity (0.0-1.0) ---
+    source_tags = [
+        "[Academic:", "[News:", "[Multi-source:", "[Full page:",
+        "[Gap query:", "[Memory:", "[Web:", "[HN:", "[SO:",
+    ]
     source_types_found = 0
-    for tag in ["[Academic:", "[News:", "[Multi-source:", "[Full page:", "[Gap query:"]:
+    for tag in source_tags:
         if any(tag in e for e in evidence):
             source_types_found += 1
+    diversity_score = min(source_types_found / 5.0, 1.0)
 
-    result = await llm_call(
-        system=(
-            "Оцени уверенность в корректности исследовательского отчёта "
-            "по шкале от 0.0 до 1.0, где 1.0 = полностью подтверждён фактами, "
-            "0.0 = не подтверждён. Учитывай: количество доказательств, "
-            "наличие противоречий, полноту ответа на вопрос, "
-            "разнообразие источников (академические, новости, веб). "
-            "Ответь ОДНИМ числом, например: 0.85"
-        ),
-        user=(
-            f"ВОПРОС: {question}\n"
-            f"ОТЧЁТ (первые 500 символов): {report[:500]}\n"
-            f"ДОКАЗАТЕЛЬСТВ: {len(evidence)}\n"
-            f"ТИПОВ ИСТОЧНИКОВ: {source_types_found}"
-        ),
-        max_tokens=10,
-        retries=1,
-    )
+    # --- Signal 3: contradiction penalty (0.0-1.0, higher = fewer contradictions) ---
+    n_contradictions = len(contradictions) if contradictions else 0
+    contradiction_score = max(0.0, 1.0 - n_contradictions * 0.2)
+
+    # --- Signal 4: report coverage heuristic ---
+    # Check if report mentions key question terms
+    q_words = set(question.lower().split())
+    # Remove short/common words
+    q_words = {w for w in q_words if len(w) > 3}
+    r_lower = report.lower()
+    covered = sum(1 for w in q_words if w in r_lower) if q_words else 0
+    coverage_score = min(covered / max(len(q_words), 1), 1.0)
+
+    # --- Signal 5: LLM calibration (optional, capped weight) ---
+    llm_score = 0.5  # default if LLM fails
     try:
+        result = await llm_call(
+            system=(
+                "Оцени уверенность в корректности исследовательского отчёта "
+                "по шкале от 0.0 до 1.0, где 1.0 = полностью подтверждён фактами, "
+                "0.0 = не подтверждён. Ответь ОДНИМ числом, например: 0.65"
+            ),
+            user=(
+                f"ВОПРОС: {question}\n"
+                f"ОТЧЁТ (первые 500 символов): {report[:500]}\n"
+                f"ДОКАЗАТЕЛЬСТВ: {ev_count}\n"
+                f"ПРОТИВОРЕЧИЙ: {n_contradictions}"
+            ),
+            max_tokens=10,
+            retries=1,
+        )
         numbers = re.findall(r"0?\.\d+|1\.0|0\.0", result.strip())
         if numbers:
-            raw_confidence = min(1.0, max(0.0, float(numbers[0])))
-            # v5: calibration boost for high source diversity
-            diversity_bonus = min(source_types_found * 0.02, 0.1)
-            return min(1.0, raw_confidence + diversity_bonus)
-    except (ValueError, IndexError):
+            llm_score = min(1.0, max(0.0, float(numbers[0])))
+    except Exception:
         pass
-    return 0.5
+
+    # --- Weighted combination ---
+    # LLM only gets 20% weight to avoid overconfidence from free models
+    confidence = (
+        volume_score * 0.20
+        + diversity_score * 0.20
+        + contradiction_score * 0.15
+        + coverage_score * 0.25
+        + llm_score * 0.20
+    )
+
+    return min(1.0, max(0.0, round(confidence, 3)))
 
 
 async def verify_facts(

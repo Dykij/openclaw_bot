@@ -311,13 +311,13 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
             "(пример: 'какой API-ключ использовать?'). Размытый запрос — НЕ повод для ask_user."
         )
 
-        # Inject BRAIN.md for Planners
+        # Inject BRAIN.md for Planners (truncated to save context budget)
         brain_path = os.path.join(framework_root, "BRAIN.md")
         if os.path.exists(brain_path):
             try:
                 with open(brain_path, "r", encoding="utf-8") as f:
                     brain_content = f.read()
-                brain_content = sanitize_file_content(brain_content)
+                brain_content = sanitize_file_content(brain_content[:4000])
                 system_prompt += f"\n\n[LATEST BRAIN.md CONTEXT]\n{brain_content}"
             except Exception as e:
                 logger.warning(f"Failed to read BRAIN.md: {e}")
@@ -349,16 +349,17 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
     if is_coder or is_architect:
         system_prompt += _OUTPUT_FORMAT_PROTOCOL
 
-    # Inject Kill List into ALL roles for persona consistency
-    system_prompt += _KILL_LIST
+    # v17.2: Kill List only for Planners, Archivists, and Auditors (saves ~500 tokens for Executors)
+    if is_planner or is_archivist or is_auditor:
+        system_prompt += _KILL_LIST
 
-    # v15.0: Inject Zero-Shot Autonomy protocol into ALL roles (replaces v14.6 Anti-Refusal)
-    system_prompt += _ZERO_SHOT_AUTONOMY_PROTOCOL
-
-    # v15.0: Role-specific execution mandates — force action, not description
-    # v15.2: Extended with Planner and Auditor mandates
+    # v15.0: Zero-Shot Autonomy only for active roles (Planners, Executors, Researchers)
     is_researcher = "Researcher" in role_name
     is_analyst = "Analyst" in role_name
+    if is_planner or is_coder or is_researcher:
+        system_prompt += _ZERO_SHOT_AUTONOMY_PROTOCOL
+
+    # v15.0: Role-specific execution mandates — force action, not description
     if is_researcher:
         system_prompt += _RESEARCHER_EXECUTION_MANDATE
     elif is_analyst:
@@ -370,14 +371,13 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
     elif is_auditor:
         system_prompt += _AUDITOR_EXECUTION_MANDATE
 
-    # Inject IDENTITY.md persona cues for Archivists (human-readable output) and Planners
+    # Inject IDENTITY.md persona cues for Archivists and Planners only
     if is_archivist or is_planner:
         identity_path = os.path.join(framework_root, "IDENTITY.md")
         if os.path.exists(identity_path):
             try:
                 with open(identity_path, "r", encoding="utf-8") as f:
                     raw = f.read()
-                # Extract only Kill List + primary persona section (compact)
                 kill_section = raw.split("## 1.")[0] if "## 1." in raw else raw[:600]
                 kill_section = sanitize_file_content(kill_section[:800])
                 system_prompt += f"\n\n[IDENTITY CONTEXT]\n{kill_section.strip()}"
@@ -396,8 +396,8 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
             except Exception as e:
                 logger.warning(f"Failed to read PROJECT_CONTEXT.md: {e}")
 
-    # v15.2: Universal CRITICAL EXECUTION DIRECTIVES — injected into EVERY system prompt
-    # This is the absolute LAST injection so the model sees it as the final authority.
-    system_prompt += _CRITICAL_EXECUTION_DIRECTIVES
+    # v15.2→v17.2: Critical directives only for Planners and Auditors
+    if is_planner or is_auditor:
+        system_prompt += _CRITICAL_EXECUTION_DIRECTIVES
 
     return system_prompt

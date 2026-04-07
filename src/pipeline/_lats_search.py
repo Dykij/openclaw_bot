@@ -109,7 +109,7 @@ class LATSEngine:
         n_branches: int = _DEFAULT_BRANCHES,
         max_depth: int = 3,
     ):
-        self.model = model or "meta-llama/llama-3.3-70b-instruct:free"
+        self.model = model or "qwen/qwen3.6-plus:free"
         self.n_branches = max(2, min(n_branches, 5))
         self.max_depth = max(1, min(max_depth, 5))
         self._node_counter = 0
@@ -147,7 +147,7 @@ class LATSEngine:
         if config:
             router_cfg = config.get("model_router", {})
             self._expand_model = router_cfg.get(
-                "expand", "google/gemma-3-12b-it:free",
+                "expand", "qwen/qwen3.6-plus:free",
             )
 
         # Depth cap: 2 for standard complex, 3 only for extreme
@@ -211,12 +211,6 @@ class LATSEngine:
                     next_level_nodes.append(best_cand)
                 else:
                     logger.debug("lats_select: no candidates at depth", depth=depth)
-                    logger.info(
-                        "lats_select",
-                        depth=depth,
-                        best_score=round(best_cand.score, 3),
-                        candidates=len(candidates),
-                    )
 
             if early_exit or not next_level_nodes:
                 break

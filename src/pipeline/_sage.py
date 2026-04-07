@@ -73,7 +73,7 @@ class SAGEEngine:
         model: str = "",
         enabled: bool = True,
     ):
-        self.model = model or "meta-llama/llama-3.3-70b-instruct:free"
+        self.model = model or "qwen/qwen3.6-plus:free"
         self.enabled = enabled
         self._correction_count = 0
 
@@ -89,7 +89,7 @@ class SAGEEngine:
         )
         m = out_of_10.search(response)
         if m:
-            return float(m.group(1)) / 10.0
+            return min(1.0, float(m.group(1)) / 10.0)
 
         # Паттерн 2: десятичное значение ≤ 1 (score: 0.25)
         decimal_pat = re.compile(
@@ -106,7 +106,7 @@ class SAGEEngine:
         m = int_pat.search(response)
         if m:
             val = float(m.group(1))
-            return val / 10.0 if val > 1.0 else val
+            return min(1.0, val / 10.0) if val > 1.0 else val
 
         return -1.0  # не удалось определить
 
@@ -271,6 +271,82 @@ class SAGEEngine:
             logger.info("SAGE correction saved to SuperMemory", key=result.session_key)
         except Exception as e:
             logger.warning("SAGE memory save failed (non-fatal)", error=str(e))
+
+    # ------------------------------------------------------------------
+    # v7: Integration with Cognitive Evolution and Obsidian Vault
+    # ------------------------------------------------------------------
+
+    def record_to_evolution(
+        self,
+        evolution_engine: Any,
+        result: SAGECorrectionResult,
+        task_id: str = "",
+        task_description: str = "",
+        model_used: str = "",
+    ) -> None:
+        """Feed SAGE correction results into the cognitive evolution engine.
+
+        This closes the self-learning loop: SAGE detects low quality →
+        cognitive evolution tracks it → prompts evolve → quality improves.
+        """
+        if evolution_engine is None:
+            return
+        try:
+            from src.cognitive_evolution import ExecutionOutcome
+
+            outcome = ExecutionOutcome(
+                task_id=task_id or result.session_key,
+                task_description=task_description or f"SAGE correction for {result.low_score_step}",
+                role=result.low_score_step,
+                intended_action="High-quality pipeline step",
+                observed_result=result.correction_hint,
+                success=not result.needs_rebuild,
+                quality_score=max(0.0, result.detected_score) if result.detected_score >= 0 else 0.2,
+                duration_sec=0.0,
+                model_used=model_used,
+                error="" if not result.needs_rebuild else f"Low score: {result.detected_score:.2f}",
+                suggestions=[result.correction_hint] if result.correction_hint else [],
+            )
+            evolution_engine.record_outcome(outcome)
+            logger.info("SAGE correction fed to CognitiveEvolution", role=result.low_score_step)
+        except Exception as e:
+            logger.warning("SAGE→CognitiveEvolution bridge failed", error=str(e))
+
+    def save_to_vault(
+        self,
+        vault_bridge: Any,
+        result: SAGECorrectionResult,
+        llm_correction: str = "",
+    ) -> None:
+        """Save SAGE correction to Obsidian vault for persistent learning.
+
+        Creates a learning log entry that the cognitive evolution engine
+        and proactive task scanner can use later.
+        """
+        if vault_bridge is None or not result.needs_rebuild:
+            return
+        try:
+            lessons = [result.correction_hint]
+            if llm_correction:
+                lessons.append(f"LLM Analysis: {llm_correction[:300]}")
+
+            vault_bridge.save_learning_log(
+                task=f"SAGE: {result.low_score_step} quality check",
+                outcome="failure",
+                lessons=lessons,
+                context=(
+                    f"Score: {result.detected_score:.2f}\n"
+                    f"Original chain: requested\n"
+                    f"Suggested chain: {' → '.join(result.suggested_chain)}"
+                ),
+                improvements=[
+                    f"Rebuild chain: {' → '.join(result.suggested_chain)}",
+                    f"Focus on improving {result.low_score_step} role prompt",
+                ],
+            )
+            logger.info("SAGE correction saved to Obsidian vault", step=result.low_score_step)
+        except Exception as e:
+            logger.warning("SAGE vault save failed (non-fatal)", error=str(e))
 
     @property
     def correction_count(self) -> int:

@@ -14,6 +14,7 @@ experience augmentation (arXiv:2603.18079) — collected in data/research/v11.6.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -217,7 +218,7 @@ class FeedbackLoopEngine:
         """Extract patterns from a commit diff and store the best ones."""
         start = time.monotonic()
 
-        diff = self._get_commit_diff(commit_hash)
+        diff = await asyncio.to_thread(self._get_commit_diff, commit_hash)
         if not diff:
             return FeedbackEntry(
                 commit_hash=commit_hash,
@@ -231,7 +232,7 @@ class FeedbackLoopEngine:
         patterns: List[CodePattern] = []
 
         # Get the list of changed files for language detection
-        changed_files = self._get_changed_files(commit_hash)
+        changed_files = await asyncio.to_thread(self._get_changed_files, commit_hash)
 
         for block in added_blocks:
             score = _score_pattern(block)

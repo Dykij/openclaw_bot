@@ -45,16 +45,9 @@ For all flags and CI/automation options, see [Installer internals](/install/inst
 
 ## System requirements
 
-<<<<<<< HEAD
-- **[Node 22+](/install/node)** (the [installer script](#install-methods) will install it if missing)
-- macOS, Linux, or Windows
-- `pnpm` only if you build from source
-- **GPU (Agent Support)**: NVIDIA RTX 5060 Ti (16GB VRAM) recommended for local model execution.
-=======
 - **Node 24** (recommended) or Node 22.14+ — the installer script handles this automatically
 - **macOS, Linux, or Windows** — both native Windows and WSL2 are supported; WSL2 is more stable. See [Windows](/platforms/windows).
 - `pnpm` is only needed if you build from source
->>>>>>> upstream/main
 
 ## Alternative install methods
 

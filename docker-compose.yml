@@ -1,35 +1,10 @@
 services:
-<<<<<<< HEAD
   # --- DATA LAYER ---
   questdb:
     image: questdb/questdb:latest
     container_name: questdb_timeseries
     networks:
       - bot_internal
-=======
-  openclaw-gateway:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
-    environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-      ## Uncomment the lines below to enable sandbox isolation
-      ## (agents.defaults.sandbox). Requires Docker CLI in the image
-      ## (build with --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1) or use
-      ## scripts/docker/setup.sh with OPENCLAW_SANDBOX=1 for automated setup.
-      ## Set DOCKER_GID to the host's docker group GID (run: stat -c '%g' /var/run/docker.sock).
-      # - /var/run/docker.sock:/var/run/docker.sock
-    # group_add:
-    #   - "${DOCKER_GID:-999}"
->>>>>>> upstream/main
     ports:
       - "127.0.0.1:9000:9000" # REST API (Local only)
       - "127.0.0.1:9009:9009" # ILP TCP (Local only)
@@ -40,6 +15,7 @@ services:
   redis:
     image: redis:alpine
     container_name: redis_state
+    command: redis-server --requirepass ${REDIS_PASSWORD:-openclaw_redis_secret}
     networks:
       - bot_internal
     ports:
@@ -61,48 +37,39 @@ services:
     restart: unless-stopped
 
   # --- ALERTING (READ-ONLY) ---
-  telegram_observer:
-    build: .
-    command: /opt/venv/bin/python3 src/alerting/telegram_bot.py
-    container_name: alerting_node
-    networks:
-      - bot_internal
-      - public_internet
-    environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}
-      - RUNNING_IN_DOCKER=1
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-    security_opt:
-      - no-new-privileges:true
-<<<<<<< HEAD
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
-    restart: unless-stopped
+  # NOTE: Commented out — src/alerting/telegram_bot.py does not exist yet.
+  # Uncomment when the alerting module is implemented.
+  # telegram_observer:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.gpu
+  #   command: /opt/venv/bin/python3 src/alerting/telegram_bot.py
+  #   container_name: alerting_node
+  #   networks:
+  #     - bot_internal
+  #     - public_internet
+  #   environment:
+  #     - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+  #     - TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}
+  #     - RUNNING_IN_DOCKER=1
+  #     - NVIDIA_VISIBLE_DEVICES=all
+  #     - NVIDIA_DRIVER_CAPABILITIES=all
+  #   dns:
+  #     - 8.8.8.8
+  #     - 8.8.4.4
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp
+  #   restart: unless-stopped
 
   # --- OBSERVABILITY DASHBOARDS ---
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus_scraper
-=======
-    environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      BROWSER: echo
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
-      TZ: ${OPENCLAW_TZ:-UTC}
->>>>>>> upstream/main
     volumes:
       - ./grafana/prometheus.yml:/etc/prometheus/prometheus.yml
     networks:
@@ -125,86 +92,96 @@ services:
       - prometheus
       - questdb
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
       - GF_USERS_ALLOW_SIGN_UP=false
     restart: unless-stopped
 
   # --- INGESTION BOUNDARY ---
-  dmarket_ingestion:
-    build: .
-    command: /opt/venv/bin/python3 src/ingestion/dmarket_ws.py
-    container_name: ingest_dmarket
-    networks:
-      - bot_internal
-      - public_internet # Needs outside access to DMarket WS
-    depends_on:
-      - redis
-      - questdb
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
-    restart: unless-stopped
+  # NOTE: Commented out — src/ingestion/dmarket_ws.py does not exist yet.
+  # Uncomment when the DMarket ingestion module is implemented.
+  # dmarket_ingestion:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.gpu
+  #   command: /opt/venv/bin/python3 src/ingestion/dmarket_ws.py
+  #   container_name: ingest_dmarket
+  #   networks:
+  #     - bot_internal
+  #     - public_internet
+  #   depends_on:
+  #     - redis
+  #     - questdb
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [ gpu ]
+  #   environment:
+  #     - NVIDIA_VISIBLE_DEVICES=all
+  #     - NVIDIA_DRIVER_CAPABILITIES=all
+  #   dns:
+  #     - 8.8.8.8
+  #     - 8.8.4.4
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp
+  #   restart: unless-stopped
 
   # --- ZERO-TRUST ISOLATED SIGNER ---
-  signer_service:
-    build: .
-    command: /opt/venv/bin/python3 src/signer_service/main.py
-    container_name: isolated_trade_signer
-    runtime: runsc
-    networks:
-      - isolated_grpc
-      - public_internet # Needs minimal outside access to reach actual exchanges with signed payloads. Alternatively, a proxy container could be used.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
-    environment:
-      - DOPPLER_TOKEN=${DOPPLER_TOKEN:-sandbox_token}
-      - PAPER_TRADE_MODE=True
-      - LOG_LEVEL=DEBUG
-      - RUNNING_IN_DOCKER=1
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
-    # Notice: NO PORTS EXPOSED to host
-    restart: on-failure
+  # NOTE: Commented out — src/signer_service/main.py does not exist yet.
+  # Uncomment when the signer service is implemented.
+  # Requires gVisor (runtime: runsc) to be installed on the host.
+  # signer_service:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.gpu
+  #   command: /opt/venv/bin/python3 src/signer_service/main.py
+  #   container_name: isolated_trade_signer
+  #   runtime: runsc
+  #   networks:
+  #     - isolated_grpc
+  #     - public_internet
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [ gpu ]
+  #   environment:
+  #     - DOPPLER_TOKEN=${DOPPLER_TOKEN:-sandbox_token}
+  #     - PAPER_TRADE_MODE=${PAPER_TRADE_MODE:-True}
+  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #     - RUNNING_IN_DOCKER=1
+  #     - NVIDIA_VISIBLE_DEVICES=all
+  #     - NVIDIA_DRIVER_CAPABILITIES=all
+  #   dns:
+  #     - 8.8.8.8
+  #     - 8.8.4.4
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp
+  #   restart: on-failure
 
   # --- CORE ALGORITHMIC ENGINES (GPU PASSTHROUGH) ---
   main_trading_engines:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
     # Starts trade_gate, markov_model, scanner_v3 logic
     command: /opt/venv/bin/python3 src/main.py
     container_name: openclaw_factory
-    runtime: runsc
+    # runtime: runsc  # Requires gVisor — uncomment when installed
     networks:
       - bot_internal
       - public_internet
@@ -225,8 +202,8 @@ services:
               count: all
               capabilities: [ gpu ] # Exposes Blackwell / RTX 5060 Ti
     environment:
-      - PAPER_TRADE_MODE=True
-      - LOG_LEVEL=DEBUG
+      - PAPER_TRADE_MODE=${PAPER_TRADE_MODE:-True}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - RUNNING_IN_DOCKER=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
@@ -241,20 +218,15 @@ services:
 
   # --- OBSERVABILITY ---
   telemetry_api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
     command: /opt/venv/bin/python3 src/telemetry.py
     container_name: prometheus_telemetry
     networks:
       - bot_internal
     ports:
-      - "0.0.0.0:9090:9090" # Expose metrics to external Prometheus scrapers
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
+      - "127.0.0.1:9090:9090"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all

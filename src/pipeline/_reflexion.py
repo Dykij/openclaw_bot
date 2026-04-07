@@ -18,7 +18,7 @@ async def reflexion_fallback(
 
         agent = ReflexionAgent(
             model=config.get("system", {}).get("model_router", {}).get(
-                "general", "meta-llama/llama-3.3-70b-instruct:free"
+                "general", "qwen/qwen3.6-plus:free"
             ),
         )
         task = (

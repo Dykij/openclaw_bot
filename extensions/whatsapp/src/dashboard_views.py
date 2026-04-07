@@ -27,8 +27,8 @@ router = APIRouter()
 # Token pricing ($ per 1K tokens) — common free/cheap models
 _TOKEN_PRICING: Dict[str, float] = {
     "default": 0.0,
+    "qwen/qwen3.6-plus:free": 0.0,
     "nvidia/nemotron-nano-12b-v2-vl:free": 0.0,
-    "arcee-ai/trinity-mini:free": 0.0,
     "qwen/qwen3-235b-a22b:free": 0.0,
     "deepseek/deepseek-r1-0528:free": 0.0,
     "openai/gpt-4o": 0.005,

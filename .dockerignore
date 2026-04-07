@@ -1,19 +1,21 @@
-<<<<<<< HEAD
+.git
+.worktrees
+
+# Sensitive files
+.env
+.env.*
+
+# Python artifacts
 venv/
 .venv/
 __pycache__/
 *.pyc
 *.pyo
-.git/
-.env
-=======
-.git
-.worktrees
 
-# Sensitive files – scripts/docker/setup.sh writes .env with OPENCLAW_GATEWAY_TOKEN
-# into the project root; keep it out of the build context.
-.env
-.env.*
+# Config files with potential secrets
+config/openclaw_config.json
+config/rl_config.json
+config/brigade_policy.json
 
 .bun-cache
 .bun
@@ -65,7 +67,6 @@ Users/
 vendor/
 
 # Needed for building the Canvas A2UI bundle during Docker image builds.
-# Keep the rest of apps/ and vendor/ excluded to avoid a large build context.
 !apps/shared/
 !apps/shared/OpenClawKit/
 !apps/shared/OpenClawKit/Sources/
@@ -79,4 +80,3 @@ vendor/
 !vendor/a2ui/renderers/
 !vendor/a2ui/renderers/lit/
 !vendor/a2ui/renderers/lit/**
->>>>>>> upstream/main

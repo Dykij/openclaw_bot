@@ -1,0 +1,51 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Prompt Requests (Total)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "openclaw_prompt_total",
+          "legendFormat": "prompts"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "title": "VRAM Usage",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "openclaw_vram_usage_bytes",
+          "legendFormat": "VRAM"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["openclaw"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "OpenClaw Overview",
+  "uid": "openclaw-overview",
+  "version": 1
+}

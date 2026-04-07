@@ -3,10 +3,31 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export async function readJsonFile<T>(filePath: string): Promise<T | null> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(filePath, "utf8");
+    raw = await fs.readFile(filePath, "utf8");
+  } catch (err) {
+    // File not found is expected; only warn on unexpected I/O errors.
+    if (
+      !(
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      )
+    ) {
+      console.warn(
+        `[json-files] failed to read ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return null;
+  }
+  try {
     return JSON.parse(raw) as T;
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[json-files] failed to parse JSON from ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
@@ -52,7 +73,17 @@ export async function writeTextAtomic(
     } catch {
       // best-effort; ignore on platforms without chmod
     }
-    await fs.rename(tmp, filePath);
+    try {
+      await fs.rename(tmp, filePath);
+    } catch (renameErr) {
+      const code = (renameErr as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "EEXIST") {
+        await fs.copyFile(tmp, filePath);
+        await fs.rm(tmp, { force: true });
+      } else {
+        throw renameErr;
+      }
+    }
     try {
       const dirHandle = await fs.open(parentDir, "r");
       try {

@@ -33,17 +33,24 @@ const TOKENS_PAD = 20;
 
 const formatKTokens = (value: number) => `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`;
 
+/** Token usage percentage thresholds for color coding in session output. */
+const TOKEN_PCT_CRITICAL = 95;
+const TOKEN_PCT_WARNING = 80;
+const TOKEN_PCT_HEALTHY = 60;
+/** Cap percentage display to avoid absurdly wide output for overflowing sessions. */
+const TOKEN_PCT_DISPLAY_CAP = 999;
+
 const colorByPct = (label: string, pct: number | null, rich: boolean) => {
   if (!rich || pct === null) {
     return label;
   }
-  if (pct >= 95) {
+  if (pct >= TOKEN_PCT_CRITICAL) {
     return theme.error(label);
   }
-  if (pct >= 80) {
+  if (pct >= TOKEN_PCT_WARNING) {
     return theme.warn(label);
   }
-  if (pct >= 60) {
+  if (pct >= TOKEN_PCT_HEALTHY) {
     return theme.success(label);
   }
   return theme.muted(label);
@@ -61,7 +68,9 @@ const formatTokensCell = (
   }
   const totalLabel = formatKTokens(total);
   const ctxLabel = contextTokens ? formatKTokens(contextTokens) : "?";
-  const pct = contextTokens ? Math.min(999, Math.round((total / contextTokens) * 100)) : null;
+  const pct = contextTokens
+    ? Math.min(TOKEN_PCT_DISPLAY_CAP, Math.round((total / contextTokens) * 100))
+    : null;
   const label = `${totalLabel}/${ctxLabel} (${pct ?? "?"}%)`;
   const padded = label.padEnd(TOKENS_PAD);
   return colorByPct(padded, pct, rich);

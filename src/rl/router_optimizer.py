@@ -63,7 +63,7 @@ class RouterOptimizer:
         optimizer.initialize()
 
         # Register available models
-        optimizer.register_model("nvidia/nemotron-3-super-120b-a12b:free",
+        optimizer.register_model("qwen/qwen3.6-plus:free",
                                  ["general", "code", "research"])
 
         # Select best model for a task

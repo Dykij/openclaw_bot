@@ -26,14 +26,15 @@ from src.bot_commands import (
     cmd_agent, cmd_agents, cmd_diag, cmd_help, cmd_history, cmd_models,
     cmd_openrouter_test, cmd_perf, cmd_research, cmd_start,
     cmd_status, cmd_tailscale, cmd_test, cmd_test_all_models,
+    cmd_train, cmd_rl_status,
     handle_callback_query, handle_document, handle_photo,
     handle_unknown_command, handle_video, handle_voice,
 )
 from src.handlers.prompt_handler import handle_prompt
 from src.handlers.tg_schemas import TelegramConfig
 from src.memory_system.gc import MemoryGarbageCollector
-from src.pipeline_executor import PipelineExecutor
-from src.safety import HallucinationDetector, PromptInjectionDefender
+from src.pipeline._core import PipelineExecutor
+from src.safety import HallucinationDetector, OutputSafetyFilter, PromptInjectionDefender
 from src.integrations.tailscale_monitor import TailscaleMonitor
 
 setup_structlog()
@@ -73,6 +74,7 @@ class OpenClawGateway:
         # Safety Guardrails (zero-VRAM heuristic checks)
         self.injection_defender = PromptInjectionDefender(strictness="medium")
         self.hallucination_detector = HallucinationDetector()
+        self.output_filter = OutputSafetyFilter()
 
         # Pipeline history & performance metrics storage
         self._pipeline_history: list = []
@@ -126,6 +128,8 @@ class OpenClawGateway:
             (cmd_agent, "agent"),
             (cmd_openrouter_test, "openrouter_test"),
             (cmd_diag, "diag"),
+            (cmd_train, "train"),
+            (cmd_rl_status, "rl_status"),
         ]
         for fn, name in _commands:
             self.dp.message.register(_h(fn), Command(name))
@@ -145,8 +149,11 @@ class OpenClawGateway:
             await handle_prompt(self, msg)
         self.dp.message.register(_prompt_handler, F.text & ~F.text.startswith('/'))
 
-        # Callback query handler for inline buttons
-        self.dp.callback_query.register(_h(handle_callback_query))
+        # Callback query handler for inline buttons (exclude hitl: prefix for HITL handler)
+        self.dp.callback_query.register(
+            _h(handle_callback_query),
+            ~F.data.startswith('hitl:'),
+        )
 
     async def reload_config(self):
         try:
@@ -167,6 +174,45 @@ class OpenClawGateway:
                 pass
         except Exception as e:
             logger.error("Failed to reload config", error=str(e))
+
+    async def _graceful_shutdown(self):
+        """Clean up all background subsystems before exit."""
+        logger.info("graceful_shutdown_initiated")
+        # Stop file-watcher observer
+        try:
+            self._observer.stop()
+            self._observer.join(timeout=3)
+        except Exception:
+            pass
+        # Stop scheduler
+        if hasattr(self, 'scheduler') and self.scheduler:
+            try:
+                await self.scheduler.shutdown()
+            except Exception:
+                pass
+        # Cancel background tasks
+        for task in list(self._bg_tasks):
+            task.cancel()
+        if self._bg_tasks:
+            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+        # Stop MAS orchestrator
+        if hasattr(self.pipeline, 'mas_orchestrator'):
+            try:
+                self.pipeline.mas_orchestrator.stop_autonomous()
+            except Exception:
+                pass
+        # Stop dashboard server
+        try:
+            from src.web.api import stop_dashboard
+            await stop_dashboard()
+        except Exception:
+            pass
+        # Close bot session
+        try:
+            await self.bot.session.close()
+        except Exception:
+            pass
+        logger.info("graceful_shutdown_complete")
 
     async def run(self):
         logger.info("Starting OpenClaw Gateway...")
@@ -243,9 +289,7 @@ class OpenClawGateway:
             if hasattr(self, '_crash_reporter'):
                 await self._crash_reporter(self.bot_token, self.admin_id, e, context="polling/webhook")
         finally:
-            self._observer.stop()
-            self._observer.join()
-            await self.bot.session.close()
+            await self._graceful_shutdown()
 
 
 if __name__ == "__main__":

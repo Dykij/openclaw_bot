@@ -19,17 +19,11 @@ Docker is **optional**. Use it only if you want a containerized gateway or to va
 ## Prerequisites
 
 - Docker Desktop (or Docker Engine) + Docker Compose v2
-<<<<<<< HEAD
-- At least 4 GB RAM (8 GB recommended) for image build and execution.
-- **VRAM**: 16GB (RTX 5060 Ti) for stable local model execution using Ollama-in-Docker.
-- Enough disk for images + logs
-=======
 - At least 2 GB RAM for image build (`pnpm install` may be OOM-killed on 1 GB hosts with exit 137)
 - Enough disk for images and logs
 - If running on a VPS/public host, review
   [Security hardening for network exposure](/gateway/security),
   especially Docker `DOCKER-USER` firewall policy.
->>>>>>> upstream/main
 
 ## Containerized Gateway
 

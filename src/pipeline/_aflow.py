@@ -123,7 +123,7 @@ class AFlowEngine:
 
     def __init__(
         self,
-        model: str = "meta-llama/llama-3.3-70b-instruct:free",
+        model: str = "qwen/qwen3.6-plus:free",
         default_chains: Optional[Dict[str, List[str]]] = None,
     ):
         self.model = model

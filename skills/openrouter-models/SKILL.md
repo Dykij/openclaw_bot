@@ -19,7 +19,7 @@ Expert model selection, routing, and cost optimization for OpenRouter API.
 | `deepseek/deepseek-chat-v3-0324:free`         | 128K    | Coding, analysis, multilingual   |
 | `nvidia/llama-3.1-nemotron-70b-instruct:free` | 128K    | Instruction following, reasoning |
 | `google/gemini-2.0-flash-exp:free`            | 1M      | Huge context, fast, multimodal   |
-| `meta-llama/llama-3.3-70b-instruct:free`      | 128K    | General purpose, balanced        |
+| `qwen/qwen3.6-plus:free`                      | 128K    | General purpose, balanced        |
 
 ### Tier 2: Budget Models ($0.01–0.10 per 1M tokens)
 
@@ -46,13 +46,13 @@ MODEL_ROUTING = {
     "reasoning": "deepseek/deepseek-r1",
     "summarization": "google/gemini-2.0-flash-exp:free",
     "translation": "qwen/qwen-2.5-72b-instruct",
-    "classification": "meta-llama/llama-3.3-70b-instruct:free",
+    "classification": "qwen/qwen3.6-plus:free",
     "creative_writing": "anthropic/claude-sonnet-4",
 }
 
 async def route_request(task_type: str, messages: list, fallback_chain: list[str] | None = None):
     model = MODEL_ROUTING.get(task_type, "deepseek/deepseek-chat-v3-0324:free")
-    chain = fallback_chain or [model, "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"]
+    chain = fallback_chain or [model, "google/gemini-2.0-flash-exp:free", "qwen/qwen3.6-plus:free"]
     for m in chain:
         try:
             return await call_openrouter(messages, model=m)
@@ -69,7 +69,7 @@ async def route_request(task_type: str, messages: list, fallback_chain: list[str
   "models": [
     "deepseek/deepseek-chat-v3-0324:free",
     "google/gemini-2.0-flash-exp:free",
-    "meta-llama/llama-3.3-70b-instruct:free"
+    "qwen/qwen3.6-plus:free"
   ]
 }
 ```

@@ -11,7 +11,13 @@ export const CHANNEL_API_RETRY_DEFAULTS = {
   jitter: 0.1,
 };
 
-const CHANNEL_API_RETRY_RE = /429|timeout|connect|reset|closed|unavailable|temporarily/i;
+/**
+ * Matches transient/rate-limit error messages from channel APIs.
+ * Covers: HTTP 429, connection timeouts, socket resets, server unavailable, and
+ * "temporarily" responses (e.g. Telegram "temporarily unavailable").
+ */
+const CHANNEL_API_RETRY_RE =
+  /\b429\b|\btimeout\b|\bconnect(?:ion)?\s+(?:reset|refused|closed)\b|\bsocket\s+(?:hang\s+up|closed)\b|\bunavailable\b|\btemporarily\b|\bECONNRESET\b|\bECONNREFUSED\b|\bEPIPE\b|\bETIMEDOUT\b/i;
 const log = createSubsystemLogger("retry-policy");
 
 function resolveChannelApiShouldRetry(params: {

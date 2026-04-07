@@ -165,7 +165,6 @@ def binary_search(arr, target) -> int:
 
 
 class TestBenchmarkRunner:
-    @pytest.mark.asyncio
     async def test_run_single(self):
         async def mock_llm(prompt, system="", task_type="", model=""):
             return "def binary_search(arr, target) -> int:\n    return -1"
@@ -177,7 +176,6 @@ class TestBenchmarkRunner:
         assert result.rule_score >= 0
         assert result.latency_ms >= 0
 
-    @pytest.mark.asyncio
     async def test_run_suite(self):
         call_count = 0
 
@@ -192,7 +190,6 @@ class TestBenchmarkRunner:
         assert "mean_score" in results
         assert "category_scores" in results
 
-    @pytest.mark.asyncio
     async def test_format_comparison(self):
         async def mock_llm(prompt, system="", task_type="", model=""):
             return "Ответ: def f(): return 42"
@@ -560,7 +557,6 @@ class TestTrainingRunner:
         count = runner.seed_prompts()
         assert count > 0
 
-    @pytest.mark.asyncio
     async def test_run_baseline_with_mock(self, tmp_dir):
         runner = TrainingRunner(data_dir=tmp_dir, api_key="test-key")
         runner.initialize()
@@ -576,7 +572,6 @@ class TestTrainingRunner:
         assert results["total_tasks"] > 0
         assert results["weighted_score"] > 0
 
-    @pytest.mark.asyncio
     async def test_generate_experience_with_mock(self, tmp_dir):
         runner = TrainingRunner(data_dir=tmp_dir, api_key="test-key")
         runner.initialize()
@@ -590,7 +585,6 @@ class TestTrainingRunner:
         assert generated == 3
         assert runner._buffer.get_stats()["total"] >= 3
 
-    @pytest.mark.asyncio
     async def test_evolve_prompts_with_mock(self, tmp_dir):
         runner = TrainingRunner(data_dir=tmp_dir, api_key="test-key")
         runner.initialize()
@@ -606,7 +600,6 @@ class TestTrainingRunner:
         total = await runner.evolve_prompts(mutations_per_type=2)
         assert total >= 0  # may be 0 if all mutations are duplicates
 
-    @pytest.mark.asyncio
     async def test_optimize_routing_with_mock(self, tmp_dir):
         runner = TrainingRunner(data_dir=tmp_dir, api_key="test-key")
         runner.initialize()
@@ -618,7 +611,6 @@ class TestTrainingRunner:
         table = await runner.optimize_routing(rounds=3)
         assert isinstance(table, dict)
 
-    @pytest.mark.asyncio
     async def test_full_training_mock(self, tmp_dir):
         """Full training loop with mocked LLM (no API calls)."""
         runner = TrainingRunner(data_dir=tmp_dir, api_key="test-key")
@@ -652,7 +644,6 @@ class TestTrainingRunner:
         log = runner.get_training_log()
         assert len(log) >= 4  # baseline, experience, evolve, evaluation
 
-    @pytest.mark.asyncio
     async def test_save_results(self, tmp_dir):
         runner = TrainingRunner(data_dir=tmp_dir, api_key="test-key")
         runner.initialize()

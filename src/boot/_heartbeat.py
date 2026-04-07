@@ -23,16 +23,28 @@ _CRASH_LOG = Path("crash_report.log")
 
 async def _send_telegram(token: str, chat_id: int | str, text: str) -> bool:
     """Low-level Telegram send — no aiogram dependency (works before Bot init)."""
+    import asyncio, json as _json
     url = _TELEGRAM_API.format(token=token)
     payload = {"chat_id": str(chat_id), "text": text, "parse_mode": "HTML"}
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    return True
-                body = await resp.text()
-                logger.error("Telegram heartbeat failed", status=resp.status, body=body[:300])
-                return False
+            for attempt in range(3):
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        return True
+                    body = await resp.text()
+                    if resp.status == 429:
+                        try:
+                            retry_after = _json.loads(body).get("parameters", {}).get("retry_after", 30)
+                        except Exception:
+                            retry_after = 30
+                        logger.warning("Telegram rate-limited, waiting", retry_after=retry_after, attempt=attempt + 1)
+                        await asyncio.sleep(retry_after)
+                        continue
+                    logger.error("Telegram heartbeat failed", status=resp.status, body=body[:300])
+                    return False
+            logger.error("Telegram heartbeat failed after retries")
+            return False
     except Exception as exc:
         logger.error("Telegram heartbeat network error", error=str(exc))
         return False

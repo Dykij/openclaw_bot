@@ -23,8 +23,8 @@ logger = structlog.get_logger("PromptHandler")
 # ---------------------------------------------------------------------------
 # v15.1: Chat History Bridge — per-user multi-turn context
 # ---------------------------------------------------------------------------
-_MAX_HISTORY_TURNS = 5
-_MAX_TURN_CHARS = 400  # truncate long messages in history to save context budget
+_MAX_HISTORY_TURNS = 10  # v17.2: increased from 5 for better multi-turn context
+_MAX_TURN_CHARS = 800  # v17.2: increased from 400 for richer history
 
 # Type alias: each turn is (user_prompt, assistant_response)
 ChatHistory = Deque[Tuple[str, str]]
@@ -103,21 +103,30 @@ def _enrich_bare_url(prompt: str) -> str:
 
 async def handle_prompt(gateway, message: Message):
     """Top-level prompt handler registered on the Dispatcher."""
-    if message.from_user.id != gateway.admin_id:
+    if not message.from_user or message.from_user.id != gateway.admin_id:
         return
 
     # --- Phase 8: HITL edit reply interception ---
     _hitl_edits = getattr(gateway, "_pending_hitl_edits", {})
     user_id = message.from_user.id
     if user_id in _hitl_edits:
-        from src.llm_gateway import resolve_approval
+        edited_text = message.text
+        if not edited_text:
+            await message.reply("⚠️ Ожидался текстовый промпт. Отправь текст, а не медиа.")
+            return
+        from src.llm.gateway import resolve_approval
         req_id = _hitl_edits.pop(user_id)
-        resolve_approval(req_id, "edited", edited_prompt=message.text)
-        await message.reply("✏️ Промпт обновлён. Запрос продолжает выполнение.")
+        ok = resolve_approval(req_id, "edit", edited_prompt=edited_text)
+        if ok:
+            await message.reply("✏️ Промпт обновлён. Запрос продолжает выполнение.")
+        else:
+            await message.reply("⚠️ Запрос уже истёк или был обработан.")
         return
 
     PROMPT_COUNTER.inc()
     prompt = message.text
+    if not prompt:
+        return
     logger.info("received_prompt", prompt=prompt)
     try:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
@@ -216,7 +225,7 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
 
     reset_limit = gateway.config.get("system", {}).get(
         "session_management", {}
-    ).get("auto_reset_context_messages", 15)
+    ).get("auto_reset_context_messages", 50)  # v17.2: increased from 15
     if gateway._session_msg_count >= reset_limit:
         gateway._session_msg_count = 0
         if hasattr(gateway, 'memory_gc'):
@@ -257,136 +266,10 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
             )
 
     # -------------------------------------------------------------------
-    # v15.4: Pipeline Inversion — early semantic decomposition BEFORE
-    # intent classification.  Avoids the Router Bottleneck where a
-    # multi-task prompt gets routed to a single brigade by the intent router.
-    # Each sub-task is individually routed via keyword heuristic and
-    # executed concurrently through its own brigade pipeline.
+    # v15.4→v17.2: Multi-task decomposition moved to _core.py execute().
+    # prompt_handler no longer duplicates the decomposer — _core.py
+    # handles both decomposition AND routing via its own multi-task path.
     # -------------------------------------------------------------------
-    if not is_reply:
-        from src.pipeline._multi_task import decompose_multi_task
-        _sub_tasks = decompose_multi_task(prompt)
-        if len(_sub_tasks) >= 2:
-            logger.info(
-                "v15.4 early decomposition activated",
-                n_tasks=len(_sub_tasks),
-                brigades=[b for _, b in _sub_tasks],
-            )
-            _brigades_set = sorted(set(b for _, b in _sub_tasks))
-            _b_label = ", ".join(_brigades_set)
-            _b_esc = gateway.archivist.escape_markdown(_b_label)
-            status_msg = await message.reply(
-                f"🧩 *Decomposer* \\({_b_esc}\\)\\: {len(_sub_tasks)} подзадач\\.\\.\\.",
-                parse_mode="MarkdownV2",
-            )
-            typing_stop = asyncio.Event()
-
-            async def _keep_typing_mt():
-                while not typing_stop.is_set():
-                    try:
-                        await message.bot.send_chat_action(
-                            chat_id=message.chat.id, action="typing",
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        await asyncio.wait_for(typing_stop.wait(), timeout=4)
-                        break
-                    except asyncio.TimeoutError:
-                        pass
-
-            typing_task = asyncio.create_task(_keep_typing_mt())
-            _pipeline_start = time.time()
-            try:
-                async def _run_sub(idx: int, text: str, brigade: str):
-                    enriched = history_prefix + text if history_prefix else text
-                    return await gateway.pipeline.execute_stream(
-                        prompt=enriched, brigade=brigade, task_type=None,
-                    )
-
-                _tasks = [
-                    _run_sub(i, t, b) for i, (t, b) in enumerate(_sub_tasks)
-                ]
-                _results = await asyncio.gather(*_tasks, return_exceptions=True)
-            finally:
-                typing_stop.set()
-                typing_task.cancel()
-
-            # Merge sub-task results
-            merged_parts: list[str] = []
-            all_steps: list[dict] = []
-            all_chains: list[str] = []
-            for i, (text, brigade) in enumerate(_sub_tasks):
-                res = _results[i]
-                if isinstance(res, Exception):
-                    merged_parts.append(
-                        f"**Задача {i + 1}** ({brigade}): ⚠️ Ошибка: {res}"
-                    )
-                else:
-                    resp = res.get("final_response", "")
-                    merged_parts.append(
-                        f"**Задача {i + 1}** ({brigade}):\n{resp}"
-                    )
-                    all_steps.extend(res.get("steps", []))
-                    all_chains.extend(res.get("chain_executed", []))
-
-            llm_response = "\n\n---\n\n".join(merged_parts)
-            llm_response = re.sub(
-                r"<think>[\s\S]*?</think>\s*", "", llm_response
-            ).strip()
-
-            chain_str = " → ".join(all_chains) if all_chains else "Decomposer"
-            display_brigade = f"Multi-Task ({_b_label})"
-            actual_brigade = _brigades_set[0]  # for archivist log
-            _pipeline_elapsed = time.time() - _pipeline_start
-
-            hall_result = gateway.hallucination_detector.detect(llm_response, prompt)
-            if hall_result.overall_risk == "high":
-                llm_response += (
-                    "\n\n⚠️ _Внимание: обнаружен высокий риск галлюцинации. "
-                    "Проверьте факты._"
-                )
-
-            # Record chat history
-            _original_user_msg = message.text or ""
-            _hist = _get_chat_history(gateway, message.from_user.id)
-            _hist.append((_original_user_msg, llm_response[:_MAX_TURN_CHARS]))
-
-            # Pipeline history
-            gateway._pipeline_history.append({
-                "timestamp": time.strftime("%H:%M:%S"),
-                "brigade": display_brigade,
-                "prompt": prompt[:80],
-                "chain": chain_str,
-                "duration_sec": _pipeline_elapsed,
-                "status": "completed",
-                "hallucination_risk": hall_result.overall_risk,
-            })
-            if len(gateway._pipeline_history) > 50:
-                gateway._pipeline_history = gateway._pipeline_history[-50:]
-
-            result = {
-                "final_response": llm_response,
-                "chain_executed": all_chains,
-                "steps": all_steps,
-                "status": "completed",
-            }
-            _dur = f"{_pipeline_elapsed:.1f}s"
-            _steps_count = len(all_steps)
-            _total_tok = sum(
-                len(s.get("response", "")) // 4 for s in all_steps
-            )
-            meta_footer = (
-                f"\n\n<tg-spoiler>📊 {display_brigade} | {chain_str} | "
-                f"⏱ {_dur} | 🔗 {_steps_count} steps | "
-                f"~{_total_tok} tok | hall: {hall_result.overall_risk}</tg-spoiler>"
-            )
-            await _send_response(
-                gateway, message, status_msg, result, llm_response,
-                chain_str, display_brigade, actual_brigade, prompt,
-                meta_footer,
-            )
-            return
 
     # 1. Intent Classification (single-task path — decomposition did not fire)
     if not is_reply:
@@ -470,7 +353,7 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
 
     # --- Send API error debug to Telegram if captured ---
     try:
-        from src.llm_gateway import get_last_api_error
+        from src.llm.gateway import get_last_api_error
         api_err = get_last_api_error()
         if api_err and api_err.get("status") in (401, 402, 429, 500, 503):
             from src.boot._heartbeat import send_api_error_debug
@@ -511,11 +394,10 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
         )
         return
 
-    llm_response = result["final_response"]
+    llm_response = result.get("final_response", "")
 
     # v15.3: Strip <think>...</think> LATS reasoning traces before showing to user
-    import re as _re
-    llm_response = _re.sub(r"<think>[\s\S]*?</think>\s*", "", llm_response).strip()
+    llm_response = re.sub(r"<think>[\s\S]*?</think>\s*", "", llm_response).strip()
 
     chain_str = " → ".join(result["chain_executed"])
     display_brigade = f"{actual_brigade} ⚡" if is_fast_path else actual_brigade
@@ -527,6 +409,17 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
         llm_response += "\n\n⚠️ _Внимание: обнаружен высокий риск галлюцинации. Проверьте факты._"
         logger.warning("Hallucination risk HIGH", flags=hall_result.flags,
                        suspicious=hall_result.suspicious_claims[:3])
+
+    # Safety: Output Content Filter (PII, credentials, harmful content)
+    if hasattr(gateway, "output_filter"):
+        filter_result = gateway.output_filter.filter(llm_response)
+        if not filter_result.is_safe:
+            logger.warning("output_safety_filter_triggered",
+                           violations=filter_result.violations,
+                           severity=filter_result.severity)
+            llm_response = filter_result.redacted_text
+            if filter_result.severity == "high":
+                llm_response += "\n\n🛡️ _Контент отфильтрован: обнаружены небезопасные элементы._"
 
     # -------------------------------------------------------------------
     # v15.1: Record turn in chat history for multi-turn context bridge.
@@ -679,7 +572,7 @@ async def _send_response(gateway, message, status_msg, result, llm_response,
             await asyncio.sleep(0.5)  # rate-limit safety
 
     # Archivist log — metadata only (response already shown above)
-    roles = list(gateway.config["brigades"][actual_brigade]["roles"].keys())
+    roles = list(gateway.config.get("brigades", {}).get(actual_brigade, {}).get("roles", {}).keys())
     await gateway.archivist.send_summary(
         f"📊 Pipeline ({actual_brigade})",
         f"Промпт: {prompt[:120]}{'…' if len(prompt) > 120 else ''}\n"

@@ -21,8 +21,8 @@
       "context_briefing_enabled": true
     },
     "telegram": {
-      "bot_token": "${8461845004:AAE-YL3rJcxUfozV2XhW6tarIJebWCv8Qbw}",
-      "admin_chat_id": "${458765683}"
+      "bot_token": "${TELEGRAM_BOT_TOKEN}",
+      "admin_chat_id": "458765683"
     },
     "speculative_decoding": {
       "enabled": false,
@@ -47,22 +47,24 @@
       "enabled": true,
       "api_key": "${OPENROUTER_API_KEY}",
       "base_url": "https://openrouter.ai/api/v1",
-      "intent_model": "arcee-ai/trinity-mini:free",
+      "intent_model": "qwen/qwen3.6-plus:free",
       "max_retries": 3,
       "retry_backoff_base": 2,
       "notes": "Permanent cloud mode. All inference routed through OpenRouter API."
     },
     "model_router": {
-      "risk_analysis": "nvidia/nemotron-3-super-120b-a12b:free",
-      "tool_execution": "arcee-ai/trinity-large-preview:free",
-      "data_parsing": "arcee-ai/trinity-mini:free",
-      "general": "nvidia/nemotron-3-super-120b-a12b:free",
-      "code": "nvidia/nemotron-3-super-120b-a12b:free",
-      "research": "arcee-ai/trinity-large-preview:free",
+      "risk_analysis": "qwen/qwen3.6-plus:free",
+      "tool_execution": "qwen/qwen3.6-plus:free",
+      "data_parsing": "qwen/qwen3.6-plus:free",
+      "general": "qwen/qwen3.6-plus:free",
+      "code": "qwen/qwen3.6-plus:free",
+      "research": "qwen/qwen3.6-plus:free",
       "vision": "nvidia/nemotron-nano-12b-v2-vl:free",
       "video_analyst": "nvidia/nemotron-nano-12b-v2-vl:free",
-      "intent": "arcee-ai/trinity-mini:free",
-      "expand": "arcee-ai/trinity-mini:free"
+      "intent": "qwen/qwen3.6-plus:free",
+      "expand": "qwen/qwen3.6-plus:free",
+      "meta": "qwen/qwen3.6-plus:free",
+      "memory_gc": "qwen/qwen3.6-plus:free"
     },
     "aflow": {
       "enabled": true,
@@ -90,13 +92,13 @@
   },
   "brigades": {
     "Dmarket-Dev": {
-      "workspace_dir": "D:/Dmarket_bot/",
+      "workspace_dir": "../Dmarket_bot/",
       "description": "Lean dev-brigade for Dmarket trading bot: plan, code, audit.",
       "roles": {
         "Planner": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.1,
           "timeout_sec": 120,
@@ -135,9 +137,9 @@
           ]
         },
         "Coder": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.2,
           "timeout_sec": 120,
@@ -182,9 +184,9 @@
           ]
         },
         "Auditor": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.1,
           "timeout_sec": 120,
@@ -221,9 +223,9 @@
       "description": "Framework self-improvement and swarm operators.",
       "roles": {
         "Planner": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.1,
           "timeout_sec": 120,
@@ -268,9 +270,9 @@
           ]
         },
         "Foreman": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.1,
           "timeout_sec": 90,
@@ -308,9 +310,9 @@
           ]
         },
         "Executor_Architect": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.2,
           "timeout_sec": 90,
@@ -357,9 +359,9 @@
           ]
         },
         "Executor_Tools": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.2,
           "timeout_sec": 90,
@@ -407,9 +409,9 @@
           ]
         },
         "Executor_Integration": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "arcee-ai/trinity-large-preview:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.3,
           "timeout_sec": 60,
@@ -453,9 +455,9 @@
           ]
         },
         "Auditor": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.1,
           "timeout_sec": 120,
@@ -486,9 +488,9 @@
           ]
         },
         "Archivist": {
-          "model": "arcee-ai/trinity-mini:free",
-          "openrouter_model": "arcee-ai/trinity-mini:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.5,
           "timeout_sec": 60,
@@ -519,9 +521,9 @@
           ]
         },
         "State_Manager": {
-          "model": "arcee-ai/trinity-mini:free",
-          "openrouter_model": "arcee-ai/trinity-mini:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.2,
           "timeout_sec": 90,
@@ -547,9 +549,9 @@
           ]
         },
         "Test_Writer": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.2,
           "timeout_sec": 90,
@@ -588,9 +590,9 @@
       "description": "Deep research, analysis, and knowledge synthesis brigade.",
       "roles": {
         "Researcher": {
-          "model": "arcee-ai/trinity-large-preview:free",
-          "openrouter_model": "arcee-ai/trinity-large-preview:free",
-          "fallback_model": "arcee-ai/trinity-mini:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.3,
           "timeout_sec": 300,
@@ -628,9 +630,9 @@
           ]
         },
         "Analyst": {
-          "model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.1,
           "timeout_sec": 120,
@@ -664,9 +666,9 @@
           ]
         },
         "Summarizer": {
-          "model": "arcee-ai/trinity-mini:free",
-          "openrouter_model": "arcee-ai/trinity-mini:free",
-          "fallback_model": "arcee-ai/trinity-large-preview:free",
+          "model": "qwen/qwen3.6-plus:free",
+          "openrouter_model": "qwen/qwen3.6-plus:free",
+          "fallback_model": "qwen/qwen3.6-plus:free",
           "num_ctx": 32768,
           "temperature": 0.5,
           "timeout_sec": 60,

@@ -52,8 +52,8 @@ SAGE Engine анализирует feedback Auditor-а и генерирует:
 
 ## Модели
 
-- **Planner/Foreman**: `nvidia/nemotron-3-super-120b-a12b:free`
-- **Executor_Tools**: `arcee-ai/trinity-large-preview:free`
-- **Executor_Architect**: `nvidia/nemotron-3-super-120b-a12b:free`
-- **Auditor**: `arcee-ai/trinity-large-preview:free`
-- **State_Manager/Archivist**: `arcee-ai/trinity-mini:free`
+- **Planner/Foreman**: `qwen/qwen3.6-plus:free`
+- **Executor_Tools**: `qwen/qwen3.6-plus:free`
+- **Executor_Architect**: `qwen/qwen3.6-plus:free`
+- **Auditor**: `qwen/qwen3.6-plus:free`
+- **State_Manager/Archivist**: `qwen/qwen3.6-plus:free`

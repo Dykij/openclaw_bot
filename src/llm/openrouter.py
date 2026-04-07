@@ -8,7 +8,7 @@ Enhanced features:
 - Retry with exponential backoff (configurable max_retries)
 - Rate-limit tracking from OpenRouter response headers
 - Circuit breaker: backs off after repeated failures
-- Streaming support via async generator
+- Non-streaming API calls (stream=False)
 """
 
 import asyncio
@@ -56,8 +56,47 @@ def _update_rate_limits(headers: Dict[str, str]) -> None:
             _rate_limit_state["requests_remaining"] = int(headers["x-ratelimit-remaining-requests"])
         if "x-ratelimit-remaining-tokens" in headers:
             _rate_limit_state["tokens_remaining"] = int(headers["x-ratelimit-remaining-tokens"])
+        if "x-ratelimit-reset-requests" in headers:
+            val = headers["x-ratelimit-reset-requests"]
+            try:
+                reset_val = float(val)
+                # Heuristic: <1e9 means seconds-until-reset, else Unix timestamp
+                if reset_val < 1e9:
+                    _rate_limit_state["reset_at"] = time.time() + reset_val
+                else:
+                    _rate_limit_state["reset_at"] = reset_val
+            except ValueError:
+                pass
     except (ValueError, KeyError):
         pass
+
+
+async def _wait_for_rate_limit() -> None:
+    """Proactive delay if rate limit is nearly exhausted."""
+    remaining = _rate_limit_state["requests_remaining"]
+    if remaining > 2:
+        return
+    reset_at = _rate_limit_state["reset_at"]
+    now = time.time()
+    if reset_at > now:
+        wait = min(reset_at - now, 10.0)
+        logger.warning("proactive_rate_limit_wait", remaining=remaining, wait_sec=round(wait, 1))
+        await asyncio.sleep(wait)
+    elif remaining <= 0:
+        logger.warning("proactive_rate_limit_pause", remaining=remaining)
+        await asyncio.sleep(2.0)
+
+
+async def _is_circuit_open_async(model: str) -> bool:
+    """Check if circuit breaker is open for a specific model (async-safe)."""
+    async with _cb_lock:
+        cb = _get_cb(model)
+        if cb["failures"] >= _CB_THRESHOLD:
+            if time.time() < cb["open_until"]:
+                return True
+            # Cooldown expired — allow a probe
+            cb["failures"] = 0
+        return False
 
 
 def _is_circuit_open(model: str) -> bool:
@@ -108,6 +147,12 @@ def reset_circuit_breakers() -> None:
     _model_circuit_breakers.clear()
 
 
+async def reset_circuit_breakers_async() -> None:
+    """Reset all circuit breakers (call at pipeline start, async-safe)."""
+    async with _cb_lock:
+        _model_circuit_breakers.clear()
+
+
 def get_rate_limit_info() -> Dict[str, Any]:
     """Get current rate-limit and circuit breaker state."""
     open_models = [m for m in _model_circuit_breakers if _is_circuit_open(m)]
@@ -155,7 +200,7 @@ async def call_openrouter(
     max_retries = role_config.get("max_retries", 3)
 
     # Build fallback chain (deduplicated, preserve order)
-    _LAST_RESORT = "google/gemma-3-12b-it:free"
+    _LAST_RESORT = "qwen/qwen3.6-plus:free"
     models_to_try: List[str] = []
     for m in [model, fallback_model, _LAST_RESORT]:
         if m and m not in models_to_try:
@@ -175,12 +220,15 @@ async def call_openrouter(
 
     last_error = ""
 
+    # Proactive rate limit check before attempting any model
+    await _wait_for_rate_limit()
+
     # --- Try each model in the fallback chain ---
     for model_idx, current_model in enumerate(models_to_try):
         if not api_key:
             break
 
-        if _is_circuit_open(current_model):
+        if await _is_circuit_open_async(current_model):
             logger.info(f"Circuit open for {current_model}, trying next fallback", role=role_name)
             continue
 
@@ -197,6 +245,7 @@ async def call_openrouter(
         timeout = aiohttp.ClientTimeout(total=timeout_sec)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for attempt in range(max_retries):
+                payload["messages"] = list(messages)  # reset to avoid corrupted retries
                 try:
                     async with session.post(
                         f"{base_url}/chat/completions",
@@ -206,7 +255,7 @@ async def call_openrouter(
                         _update_rate_limits(dict(resp.headers))
 
                         if resp.status == 200:
-                            _record_success(current_model)
+                            await record_success_async(current_model)
                             data = await resp.json()
                             choice = data.get("choices", [{}])[0]
                             msg = choice.get("message", {})
@@ -256,7 +305,7 @@ async def call_openrouter(
 
                         # Rate limited or upstream error: retry with backoff
                         if resp.status == 429:
-                            _record_failure(current_model)
+                            await record_failure_async(current_model)
                             wait = min(2 ** attempt * 2, 15)
                             logger.warning(
                                 f"Rate-limited ({current_model}) for {role_name}, "
@@ -295,7 +344,7 @@ async def call_openrouter(
                             attempt=f"{attempt + 1}/{max_retries}",
                             body=error_body[:200],
                         )
-                        _record_failure(current_model)
+                        await record_failure_async(current_model)
                         if attempt < max_retries - 1:
                             await asyncio.sleep(min(2 ** attempt, 8))
                             continue
@@ -303,7 +352,7 @@ async def call_openrouter(
                         break
 
                 except asyncio.TimeoutError:
-                    _record_failure(current_model)
+                    await record_failure_async(current_model)
                     logger.warning(
                         f"Timeout ({current_model}) for {role_name} ({timeout_sec}s), "
                         f"attempt {attempt + 1}/{max_retries}"
@@ -314,7 +363,7 @@ async def call_openrouter(
                     break
 
                 except Exception as e:
-                    _record_failure(current_model)
+                    await record_failure_async(current_model)
                     last_error = str(e)
                     logger.warning(f"Error ({current_model}) for {role_name}: {e}, attempt {attempt + 1}/{max_retries}")
                     if attempt < max_retries - 1:
@@ -339,8 +388,15 @@ async def _execute_tool_calls(tool_calls: list, mcp_client: Any) -> list:
     """Execute MCP tool calls and return results for OpenAI-compatible message format."""
     results = []
     for tc in tool_calls:
-        fn_name = tc["function"]["name"]
-        fn_args = tc["function"]["arguments"]
+        fn_name = tc.get("function", {}).get("name", "")
+        fn_args = tc.get("function", {}).get("arguments", "{}")
+        if not fn_name:
+            results.append({
+                "role": "tool",
+                "tool_call_id": tc.get("id", ""),
+                "content": json.dumps({"error": "Missing function name"}),
+            })
+            continue
         if isinstance(fn_args, str):
             try:
                 fn_args = json.loads(fn_args)
@@ -363,7 +419,7 @@ async def _execute_tool_calls(tool_calls: list, mcp_client: Any) -> list:
     return results
 
 
-async def check_openrouter(api_key: str, model: str = "arcee-ai/trinity-mini:free") -> Dict[str, Any]:
+async def check_openrouter(api_key: str, model: str = "qwen/qwen3.6-plus:free") -> Dict[str, Any]:
     """Quick connectivity test — sends a ping to OpenRouter and returns status."""
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",

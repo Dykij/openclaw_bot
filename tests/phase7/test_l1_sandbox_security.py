@@ -112,7 +112,6 @@ class TestSandboxExecution:
     def sandbox(self, tmp_path):
         return DynamicSandbox(base_dir=str(tmp_path / "skills"))
 
-    @pytest.mark.asyncio
     async def test_execute_safe_code(self, sandbox):
         result = await sandbox.execute("print('Hello Phase 7')")
         assert result.success is True
@@ -121,13 +120,11 @@ class TestSandboxExecution:
         assert result.method in ("docker", "subprocess")
         assert result.elapsed_sec >= 0
 
-    @pytest.mark.asyncio
     async def test_execute_math(self, sandbox):
         result = await sandbox.execute("print(2 ** 10)")
         assert result.success is True
         assert "1024" in result.stdout
 
-    @pytest.mark.asyncio
     async def test_execute_denied_code_never_runs(self, sandbox):
         """Malicious code is blocked BEFORE execution."""
         result = await sandbox.execute('import os; os.system("echo pwned")')
@@ -136,20 +133,17 @@ class TestSandboxExecution:
         assert "Safety validation failed" in result.stderr
         assert result.method == "validation"
 
-    @pytest.mark.asyncio
     async def test_execute_syntax_error(self, sandbox):
         result = await sandbox.execute("def broken(:\n  pass")
         assert result.success is False
         assert result.exit_code != 0
         assert "SyntaxError" in result.stderr or "invalid syntax" in result.stderr
 
-    @pytest.mark.asyncio
     async def test_execute_runtime_error(self, sandbox):
         result = await sandbox.execute("x = 1 / 0")
         assert result.success is False
         assert "ZeroDivisionError" in result.stderr
 
-    @pytest.mark.asyncio
     async def test_execute_timeout(self, sandbox):
         """Long-running code respects timeout."""
         import sys
@@ -159,7 +153,6 @@ class TestSandboxExecution:
         assert result.success is False
         assert "Timeout" in result.stderr or result.exit_code == -1
 
-    @pytest.mark.asyncio
     async def test_script_hash_deterministic(self, sandbox):
         code = "print('hash_test')"
         r1 = await sandbox.execute(code)
@@ -168,7 +161,6 @@ class TestSandboxExecution:
         expected = hashlib.sha256(code.encode()).hexdigest()
         assert r1.script_hash == expected
 
-    @pytest.mark.asyncio
     async def test_output_truncation(self, sandbox):
         """Output longer than _MAX_OUTPUT_CHARS gets truncated."""
         # Generate output slightly over the limit
@@ -177,14 +169,12 @@ class TestSandboxExecution:
         assert result.success is True
         assert len(result.stdout) <= _MAX_OUTPUT_CHARS
 
-    @pytest.mark.asyncio
     async def test_network_attempt_fails_in_code(self, sandbox):
         """socket import is blocked by deny-list."""
         result = await sandbox.execute("import socket; s = socket.socket()")
         assert result.success is False
         assert "Safety validation failed" in result.stderr
 
-    @pytest.mark.asyncio
     async def test_env_sanitized(self, sandbox):
         """Sensitive env vars are not leaked to subprocess."""
         os.environ["TEST_SECRET_KEY"] = "should_not_appear"
@@ -276,7 +266,6 @@ class TestSandboxSkillSave:
     def sandbox(self, tmp_path):
         return DynamicSandbox(base_dir=str(tmp_path / "skills"))
 
-    @pytest.mark.asyncio
     async def test_save_successful_execution(self, sandbox):
         result = await sandbox.execute("print('saveable')")
         assert result.success
@@ -287,7 +276,6 @@ class TestSandboxSkillSave:
         assert skill.name == "saveable_skill"
         assert len(sandbox.skill_library.list_skills()) == 1
 
-    @pytest.mark.asyncio
     async def test_refuse_save_failed_execution(self, sandbox):
         result = await sandbox.execute("raise ValueError('boom')")
         assert not result.success
@@ -295,7 +283,6 @@ class TestSandboxSkillSave:
         assert skill is None
         assert len(sandbox.skill_library.list_skills()) == 0
 
-    @pytest.mark.asyncio
     async def test_synthesize_and_run_success(self, sandbox):
         result, skill = await sandbox.synthesize_and_run(
             task_description="Calculate fibonacci 10",
@@ -306,7 +293,6 @@ class TestSandboxSkillSave:
         assert skill is not None
         assert "fibonacci" in skill.name.lower()
 
-    @pytest.mark.asyncio
     async def test_synthesize_and_run_failure(self, sandbox):
         result, skill = await sandbox.synthesize_and_run(
             task_description="Bad math",

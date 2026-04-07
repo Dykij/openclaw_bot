@@ -1,13 +1,9 @@
-<<<<<<< HEAD
-import SHARED_TOOL_DISPLAY_JSON from "../resources/tool-display.json" with { type: "json" };
-=======
->>>>>>> upstream/main
 import { redactToolDetail } from "../logging/redact.js";
 import { shortenHomeInString } from "../utils.js";
 import {
   defaultTitle,
-  formatToolDetailText,
   formatDetailKey,
+  formatToolDetailText,
   normalizeToolName,
   resolveToolVerbAndDetailForArgs,
 } from "./tool-display-common.js";

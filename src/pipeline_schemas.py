@@ -247,6 +247,7 @@ ROLE_GUARDRAILS = {
     "Researcher": validate_researcher,
     "Analyst": validate_analyst,
     "Archivist": validate_archivist,
+    "Coder": validate_executor,
     "Executor_Architect": validate_executor,
     "Executor_Tools": validate_executor,
     "Executor_Integration": validate_executor,
@@ -266,6 +267,8 @@ ROLE_TOKEN_BUDGET = {
     "Risk_Analyst": 1536, "Debugger": 2048, "Test_Writer": 2560,
     "Planner": 2048, "Foreman": 2048,
     "Auditor": 1536,
+    "Researcher": 2560, "Analyst": 2048, "Summarizer": 1536,
+    "Coder": 2048,
 }
 
 # Roles eligible for MCP tool injection
@@ -275,4 +278,5 @@ TOOL_ELIGIBLE_ROLES = (
     "Latency_Optimizer", "Debugger", "Test_Writer",
     "Planner", "Foreman",
     "Data_Analyst", "Risk_Analyst",
+    "Researcher",
 )

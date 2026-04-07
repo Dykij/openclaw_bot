@@ -56,7 +56,6 @@ class TestE2EReActSandbox:
     def sandbox(self, tmp_path):
         return DynamicSandbox(base_dir=str(tmp_path / "skills"))
 
-    @pytest.mark.asyncio
     async def test_buggy_code_detected(self, sandbox):
         """Step 1: Buggy code is executed in sandbox and fails."""
         buggy_code = (
@@ -69,7 +68,6 @@ class TestE2EReActSandbox:
         assert result.success is False
         assert "ZeroDivisionError" in result.stderr
 
-    @pytest.mark.asyncio
     async def test_fixed_code_succeeds(self, sandbox):
         """Step 2: Corrected code with non-empty list produces correct output."""
         fixed_code = (
@@ -82,7 +80,6 @@ class TestE2EReActSandbox:
         assert result.success is True
         assert "15.0" in result.stdout
 
-    @pytest.mark.asyncio
     async def test_full_reflexion_cycle(self, sandbox):
         """Full loop: execute buggy → get error → execute fixed → save skill."""
         # Phase 1: buggy code fails
@@ -108,7 +105,6 @@ class TestE2EReActSandbox:
         assert skill.name == "safe_division"
         assert len(sandbox.skill_library.list_skills()) == 1
 
-    @pytest.mark.asyncio
     async def test_react_parser_extracts_sandbox_action(self):
         """ReAct parser correctly identifies sandbox_execute as action."""
         reasoner = ReActReasoner(model="")
@@ -120,7 +116,6 @@ class TestE2EReActSandbox:
         assert "code" in payload
         assert payload["language"] == "python"
 
-    @pytest.mark.asyncio
     async def test_react_parser_recognizes_finish(self):
         """ReAct parser recognizes Finish action."""
         reasoner = ReActReasoner(model="")
@@ -128,7 +123,6 @@ class TestE2EReActSandbox:
         assert action == "Finish"
         assert "15.0" in action_input
 
-    @pytest.mark.asyncio
     async def test_mocked_react_sandbox_loop(self, sandbox):
         """Full mock: 3-step ReAct loop with sandbox execution.
 
@@ -207,7 +201,6 @@ class TestSkillReuse:
     def sandbox(self, tmp_path):
         return DynamicSandbox(base_dir=str(tmp_path / "skills"))
 
-    @pytest.mark.asyncio
     async def test_execute_saved_skill(self, sandbox):
         # Save a skill
         r1 = await sandbox.execute("print('reusable')")
@@ -219,12 +212,10 @@ class TestSkillReuse:
         assert r2.success is True
         assert "reusable" in r2.stdout
 
-    @pytest.mark.asyncio
     async def test_execute_nonexistent_skill_returns_none(self, sandbox):
         r = await sandbox.execute_skill("skill_fake_doesnotexist")
         assert r is None
 
-    @pytest.mark.asyncio
     async def test_skill_find_and_execute(self, sandbox):
         """Agent finds a relevant skill by keyword and re-executes it."""
         code = "import math\nprint(f'Pi = {math.pi}')"

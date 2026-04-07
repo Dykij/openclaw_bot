@@ -278,10 +278,10 @@ def apply_token_budget(evidence: List[str]) -> str:
     used = 0
     for i, block in enumerate(evidence):
         # v5: progressive truncation — later blocks get trimmed more aggressively
-        if i > 10:
-            block = block[:_MAX_ENRICHED_CONTENT_CHARS // 2]
-        elif i > 20:
+        if i > 20:
             block = block[:_MAX_ENRICHED_CONTENT_CHARS // 4]
+        elif i > 10:
+            block = block[:_MAX_ENRICHED_CONTENT_CHARS // 2]
         block_len = len(block) + len(separator)
         if used + block_len > budget:
             # v5: add partial block if possible (at least 200 chars)

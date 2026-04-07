@@ -54,7 +54,7 @@ class MemoryGarbageCollector:
         if config and config.get("system", {}).get("model_router", {}).get("memory_gc"):
             self.model = config["system"]["model_router"]["memory_gc"]
         else:
-            self.model = "google/gemma-3-12b-it:free"
+            self.model = "qwen/qwen3.6-plus:free"
         self._persistent_summary: str = ""
         self._compression_count: int = 0
         self._critical_facts: list = []  # Never-forget facts extracted during compression

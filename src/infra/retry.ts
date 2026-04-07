@@ -33,7 +33,8 @@ const DEFAULT_RETRY_CONFIG = {
 const asFiniteNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
-const clampNumber = (value: unknown, fallback: number, min?: number, max?: number) => {
+/** Coerce an unknown value to a finite number, falling back to `fallback` and clamping to [min, max]. */
+const clampUnknownNumber = (value: unknown, fallback: number, min?: number, max?: number) => {
   const next = asFiniteNumber(value);
   if (next === undefined) {
     return fallback;
@@ -47,16 +48,19 @@ export function resolveRetryConfig(
   defaults: Required<RetryConfig> = DEFAULT_RETRY_CONFIG,
   overrides?: RetryConfig,
 ): Required<RetryConfig> {
-  const attempts = Math.max(1, Math.round(clampNumber(overrides?.attempts, defaults.attempts, 1)));
+  const attempts = Math.max(
+    1,
+    Math.round(clampUnknownNumber(overrides?.attempts, defaults.attempts, 1)),
+  );
   const minDelayMs = Math.max(
     0,
-    Math.round(clampNumber(overrides?.minDelayMs, defaults.minDelayMs, 0)),
+    Math.round(clampUnknownNumber(overrides?.minDelayMs, defaults.minDelayMs, 0)),
   );
   const maxDelayMs = Math.max(
     minDelayMs,
-    Math.round(clampNumber(overrides?.maxDelayMs, defaults.maxDelayMs, 0)),
+    Math.round(clampUnknownNumber(overrides?.maxDelayMs, defaults.maxDelayMs, 0)),
   );
-  const jitter = clampNumber(overrides?.jitter, defaults.jitter, 0, 1);
+  const jitter = clampUnknownNumber(overrides?.jitter, defaults.jitter, 0, 1);
   return { attempts, minDelayMs, maxDelayMs, jitter };
 }
 

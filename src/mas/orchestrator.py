@@ -93,15 +93,20 @@ class AgentOrchestrator:
         config: Dict[str, Any],
         inference_fn: Optional[Callable[..., Coroutine]] = None,
         model_selector: Any = None,
+        vault_bridge: Any = None,
+        evolution_engine: Any = None,
     ):
         self._config = config
         self._inference_fn = inference_fn  # async callable for LLM inference
         self._model_selector = model_selector
         self._agents: Dict[str, _AgentRuntime] = {}
-        self._task_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        self._task_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=1000)
         self._results: Dict[str, TaskResult] = {}
+        self._max_results = 500
         self._autonomous_running = False
         self._autonomous_task: Optional[asyncio.Task] = None
+        self._vault = vault_bridge  # v7: ObsidianBridge for persistent logging
+        self._evolution = evolution_engine  # v7: CognitiveEvolutionEngine
 
         logger.info("AgentOrchestrator initialized")
 
@@ -210,6 +215,7 @@ class AgentOrchestrator:
                 duration_sec=round(duration, 2),
             )
             self._results[task_id] = result
+            self._log_execution(result, defn, prompt, success=True)
             logger.info("Task completed", task_id=task_id, agent=defn.name, duration=f"{duration:.1f}s")
             return result
 
@@ -228,6 +234,7 @@ class AgentOrchestrator:
                 duration_sec=round(duration, 2),
             )
             self._results[task_id] = result
+            self._log_execution(result, defn, prompt, success=False)
             logger.warning("Task timeout", task_id=task_id, agent=defn.name)
             return result
 
@@ -246,6 +253,7 @@ class AgentOrchestrator:
                 duration_sec=round(duration, 2),
             )
             self._results[task_id] = result
+            self._log_execution(result, defn, prompt, success=False)
             logger.error("Task failed", task_id=task_id, agent=defn.name, error=str(e))
             return result
 
@@ -254,38 +262,47 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
 
     async def run_autonomous(self, interval_sec: float = 60.0) -> None:
-        """Start the autonomous processing loop.
-
-        Checks the task queue periodically and dispatches tasks to agents.
-        """
+        """Start the autonomous processing loop as a background task."""
         if self._autonomous_running:
             logger.warning("Autonomous loop already running")
             return
 
         self._autonomous_running = True
+        self._autonomous_task = asyncio.create_task(
+            self._autonomous_loop(interval_sec)
+        )
         logger.info("Autonomous loop started", interval_sec=interval_sec)
 
+    async def _autonomous_loop(self, interval_sec: float) -> None:
+        """Internal loop — dispatches queued tasks periodically."""
         while self._autonomous_running:
             try:
-                # Process any queued tasks
-                while not self._task_queue.empty():
-                    task_data = self._task_queue.get_nowait()
+                while True:
+                    try:
+                        task_data = self._task_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
                     capability = task_data.get("capability", "general")
                     prompt = task_data.get("prompt", "")
                     context = task_data.get("context", {})
                     await self.dispatch(capability, prompt, context)
 
-                # Health check: recover agents in error state
                 self._health_check()
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error("Autonomous loop error", error=str(e))
 
             await asyncio.sleep(interval_sec)
 
+        self._autonomous_running = False
+
     def stop_autonomous(self) -> None:
         """Stop the autonomous processing loop."""
         self._autonomous_running = False
+        if self._autonomous_task and not self._autonomous_task.done():
+            self._autonomous_task.cancel()
         logger.info("Autonomous loop stop requested")
 
     def enqueue_task(self, capability: str, prompt: str, context: Optional[Dict] = None) -> None:
@@ -355,10 +372,10 @@ class AgentOrchestrator:
         return await asyncio.wait_for(
             self._inference_fn(
                 prompt=prompt,
-                system_prompt=system,
+                system=system,
+                task_type=definition.role,
                 model=model,
-                model_tier=definition.model_tier,
-                role_name=definition.role,
+                max_tokens=2048,
             ),
             timeout=definition.timeout_sec,
         )
@@ -372,6 +389,56 @@ class AgentOrchestrator:
                     logger.info("Recovering agent from error state", agent=rt.definition.name)
                     rt.state = AgentState.IDLE
                     rt.consecutive_errors = 0
+        # Evict oldest results if over limit
+        if len(self._results) > self._max_results:
+            excess = len(self._results) - self._max_results
+            for key in list(self._results)[:excess]:
+                del self._results[key]
+
+    def _log_execution(
+        self,
+        result: TaskResult,
+        definition: AgentDefinition,
+        prompt: str,
+        success: bool,
+    ) -> None:
+        """Log task execution to vault and feed into cognitive evolution engine (v7)."""
+        # Feed into CognitiveEvolutionEngine
+        if self._evolution:
+            try:
+                from src.cognitive_evolution import ExecutionOutcome
+
+                quality = 0.7 if success else 0.2
+                outcome = ExecutionOutcome(
+                    task_id=result.task_id,
+                    task_description=prompt[:200],
+                    role=definition.role,
+                    intended_action=f"Execute {definition.name} task",
+                    observed_result=result.output[:300] if result.output else result.error[:300],
+                    success=success,
+                    quality_score=quality,
+                    duration_sec=result.duration_sec,
+                    model_used=result.model_used or definition.model_tier,
+                    error=result.error,
+                )
+                self._evolution.record_outcome(outcome)
+            except Exception as e:
+                logger.debug("Evolution logging skipped", error=str(e))
+
+        # Log to Obsidian vault
+        if self._vault:
+            try:
+                self._vault.save_learning_log(
+                    task=f"{definition.name}: {prompt[:60]}",
+                    outcome="success" if success else "failure",
+                    lessons=[
+                        f"Duration: {result.duration_sec:.1f}s",
+                        f"Status: {result.status}",
+                    ] + ([f"Error: {result.error[:200]}"] if result.error else []),
+                    context=f"Agent: {definition.name}\nRole: {definition.role}\nTask ID: {result.task_id}",
+                )
+            except Exception as e:
+                logger.debug("Vault logging skipped", error=str(e))
 
     # ------------------------------------------------------------------
     # Status / monitoring

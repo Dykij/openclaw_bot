@@ -120,6 +120,12 @@ from src.web.dashboard_views import router as dashboard_router
 app.include_router(dashboard_router)
 
 
+@app.get("/health")
+async def health_check() -> JSONResponse:
+    """Lightweight health check for Docker/K8s probes."""
+    return JSONResponse({"status": "ok"}, status_code=200)
+
+
 @app.get("/status")
 async def get_status() -> JSONResponse:
     """Bot & pipeline health overview."""
@@ -135,8 +141,8 @@ async def get_status() -> JSONResponse:
     try:
         from src.llm.gateway import get_metrics_collector
         mc = get_metrics_collector()
-        if mc and hasattr(mc, "summary"):
-            metrics_summary = mc.summary()
+        if mc and hasattr(mc, "get_metrics"):
+            metrics_summary = mc.get_metrics()
     except Exception:
         pass
 

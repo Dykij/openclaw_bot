@@ -82,8 +82,9 @@ async def configure_llm_and_pipeline(gateway) -> None:
     if hasattr(gateway, "clawhub_client") and gateway.clawhub_client:
         async def _marketplace_sync():
             try:
+                _sb = getattr(gateway.pipeline, '_sandbox', None)
                 result = await gateway.clawhub_client.sync_skills_with_library(
-                    getattr(gateway.pipeline, "skill_library", None)
+                    getattr(_sb, 'skill_library', None) if _sb else None
                 )
                 logger.info("ClawHub Marketplace sync complete", **result)
             except Exception as exc:
@@ -120,3 +121,42 @@ async def configure_llm_and_pipeline(gateway) -> None:
         logger.error("Brigade API failed to start", error=str(e))
     if _tg_log:
         await _tg_log.stage("🏰", "Brigade API", f"Порт {brigade_port}")
+
+    # 10. Obsidian Bridge + Cognitive Evolution Engine
+    try:
+        from src.obsidian_bridge import ObsidianBridge
+        from src.cognitive_evolution import CognitiveEvolutionEngine
+
+        gateway.vault_bridge = ObsidianBridge()
+        gateway.evolution_engine = CognitiveEvolutionEngine(vault_bridge=gateway.vault_bridge)
+
+        # Wire into pipeline and orchestrator if available
+        if hasattr(gateway, "pipeline"):
+            gateway.pipeline.vault_bridge = gateway.vault_bridge
+            gateway.pipeline.evolution_engine = gateway.evolution_engine
+
+        vault_notes = len(gateway.vault_bridge.list_notes())
+        logger.info("Obsidian Bridge + CognitiveEvolution initialized", vault_notes=vault_notes)
+        if _tg_log:
+            await _tg_log.stage("🧠", "Obsidian + Evolution", f"Vault: {vault_notes} notes. Self-learning active.")
+    except Exception as e:
+        logger.warning("Obsidian/CognitiveEvolution init failed (non-fatal)", error=str(e))
+
+    # 11. RL Orchestrator (Reward Model + Experience Buffer + Training)
+    try:
+        from src.rl.orchestrator import RLOrchestrator
+        _rl_data_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "rl",
+        )
+        gateway.rl_orchestrator = RLOrchestrator(data_dir=_rl_data_dir)
+        gateway.rl_orchestrator.initialize()
+
+        if hasattr(gateway, "pipeline"):
+            gateway.pipeline.rl_orchestrator = gateway.rl_orchestrator
+
+        logger.info("RLOrchestrator initialized", data_dir=_rl_data_dir)
+        if _tg_log:
+            await _tg_log.stage("🎯", "RL Orchestrator", "Reward model + Experience buffer ready.")
+    except Exception as e:
+        logger.warning("RLOrchestrator init failed (non-fatal)", error=str(e))

@@ -44,6 +44,6 @@ Planner → Coder → Auditor
 
 SmartModelRouter подбирает модели по ролям:
 
-- **Planner**: `nvidia/nemotron-3-super-120b-a12b:free` (general)
-- **Coder**: `nvidia/nemotron-3-super-120b-a12b:free` (code)
-- **Auditor**: `arcee-ai/trinity-large-preview:free` (tool_execution)
+- **Planner**: `qwen/qwen3.6-plus:free` (general)
+- **Coder**: `qwen/qwen3.6-plus:free` (code)
+- **Auditor**: `qwen/qwen3.6-plus:free` (tool_execution)

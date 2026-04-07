@@ -68,6 +68,7 @@ async def poll_remote_tasks(gateway):
                         def __init__(self, prompt, admin_id, bot):
                             self.text = prompt
                             self.from_user = type("MockUser", (), {"id": admin_id})()
+                            self.chat = type("MockChat", (), {"id": admin_id})()
                             self.reply_to_message = None
                             self.bot = bot
 

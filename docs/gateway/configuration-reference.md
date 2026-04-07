@@ -3002,7 +3002,7 @@ Validation and safety notes:
       renewEveryMinutes: 720,
       serve: { bind: "127.0.0.1", port: 8788, path: "/" },
       tailscale: { mode: "funnel", path: "/gmail-pubsub" },
-      model: "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+      model: "openrouter/qwen/qwen3.6-plus:free",
       thinking: "off",
     },
   },

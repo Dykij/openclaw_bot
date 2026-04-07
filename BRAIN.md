@@ -53,9 +53,9 @@
 
 ## Models (OpenRouter Primary):
 
-- **fast_free:** arcee-ai/trinity-mini:free, stepfun/step-3.5-flash:free
-- **balanced:** nvidia/nemotron-3-super-120b-a12b:free
-- **premium:** deepseek/deepseek-chat-v3-0324:free, qwen/qwen-2.5-coder-32b-instruct:free
+- **fast_free:** qwen/qwen3.6-plus:free, stepfun/step-3.5-flash:free
+- **balanced:** qwen/qwen3.6-plus:free
+- **premium:** deepseek/deepseek-chat-v3-0324:free, qwen/qwen3.6-plus:free
 - **reasoning:** deepseek/deepseek-r1:free
 - **fallback:** OpenRouter automatic model failover (tier-based)
 

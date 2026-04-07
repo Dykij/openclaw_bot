@@ -1,6 +1,10 @@
 node_modules
 **/node_modules/
 .env
+.env.*
+!.env.example
+# Config files with hardcoded secrets
+config/openclaw_config.json
 docker-compose.override.yml
 docker-compose.extra.yml
 OpenClaw_Codebase_Dump.md
@@ -117,6 +121,25 @@ logs/
 *.bak
 *.bak.*
 
+# Test/stress artifacts (auto-generated, never commit)
+data/stress_test_results.json
+data/verification_results.json
+data/full_stress_test*.json
+data/pipeline_test_report*.md
+data/pipeline_test_results.json
+data/runtime_error_log.json
+
+# Ad-hoc root test/fix scripts (never commit)
+_test_*.py
+_full_stress_test*.py
+fix*.py
+
+# Local skill cache (auto-generated)
+data/local_skills/
+
+# ML cache
+unsloth_compiled_cache/
+
 # Build/lint/test output artifacts
 *_output.txt
 *_results.txt
@@ -155,7 +178,6 @@ dist/protocol.schema.json
 
 # Synthing
 **/.stfolder/
-<<<<<<< HEAD
 
 # Local Python & WSL development
 venv/
@@ -164,11 +186,9 @@ cloudflared
 cloudflared.log
 .bot.lock
 *.lock.json
-=======
 .dev-state
 docs/superpowers/plans/2026-03-10-collapsed-side-nav.md
 docs/superpowers/specs/2026-03-10-collapsed-side-nav-design.md
-.gitignore
 test/config-form.analyze.telegram.test.ts
 ui/src/ui/theme-variants.browser.test.ts
 ui/src/ui/__screenshots__
@@ -188,4 +208,3 @@ changelog/fragments/
 .artifacts/
 test/fixtures/openclaw-vitest-unit-report.json
 analysis/
->>>>>>> upstream/main

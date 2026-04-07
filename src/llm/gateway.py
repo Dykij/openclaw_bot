@@ -16,9 +16,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Coroutine, Dict, List, Optional
 
 import aiohttp
 import structlog
@@ -63,7 +64,7 @@ from src.llm.hitl import (
 _VISION_MODELS: list[str] = [
     "nvidia/nemotron-nano-12b-v2-vl:free",
     "google/gemma-3-27b-it:free",
-    "google/gemma-3-12b-it:free",
+    "qwen/qwen3.6-plus:free",
 ]
 
 
@@ -192,10 +193,9 @@ async def route_llm(
                 except Exception as e:
                     logger.warning("HITL callback failed", error=str(e))
 
-            # Wait for human decision (poll with timeout)
-            deadline = time.monotonic() + _approval_config.get("timeout_sec", 300)
-            while approval.status == "PENDING_APPROVAL" and time.monotonic() < deadline:
-                await asyncio.sleep(1)
+            # Wait for human decision (event-based, non-blocking)
+            timeout_sec = _approval_config.get("timeout_sec", 300)
+            await approval.wait(timeout=timeout_sec)
 
             if approval.status == "REJECTED":
                 logger.info("HITL: request rejected", request_id=approval.request_id)
@@ -311,7 +311,7 @@ async def route_llm(
             prompt_tokens=prompt_tokens_est,
             completion_tokens=completion_tokens_est,
             total_latency_ms=elapsed_ms,
-            first_token_ms=elapsed_ms * 0.15,
+            first_token_ms=0.0,  # no streaming — TTFT not available
         )
 
     logger.debug(
@@ -333,6 +333,11 @@ def get_metrics_collector():
 def get_token_budget():
     """Return the shared AdaptiveTokenBudget instance."""
     return _token_budget
+
+
+def get_smart_router():
+    """Return the shared SmartModelRouter instance (or None)."""
+    return _smart_router
 
 
 def is_cloud_only() -> bool:
@@ -391,19 +396,23 @@ async def _call_openrouter(
     timeout_override: Optional[int] = None,
 ) -> str:
     """Call OpenRouter API with retry + circuit breaker awareness."""
-    from src.llm.openrouter import _is_circuit_open, _record_failure, _record_success
+    from src.llm.openrouter import _is_circuit_open_async, record_failure_async, record_success_async, _wait_for_rate_limit
 
     api_key = _openrouter_config.get("api_key", "").strip()
     base_url = _openrouter_config.get("base_url", "https://openrouter.ai/api/v1").rstrip("/")
     endpoint = f"{base_url}/chat/completions"
 
-    if not api_key or _is_circuit_open(model):
+    if not api_key or not model or await _is_circuit_open_async(model):
         return ""
 
-    # Free-tier enforcement: reject models without :free suffix to prevent 402
+    # Proactive rate limit check
+    await _wait_for_rate_limit()
+
+    # Free-tier enforcement: ensure model has :free suffix to prevent 402
     if ":free" not in model:
         logger.warning("Free-tier guard: model missing :free suffix, auto-appending", model=model)
-        model = model + ":free"
+        # Replace existing :<tag> suffix if present (e.g. :beta, :extended)
+        model = (model.rsplit(":", 1)[0] if ":" in model and "/" in model.split(":")[0] else model) + ":free"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -420,9 +429,9 @@ async def _call_openrouter(
     }
 
     timeout = aiohttp.ClientTimeout(total=timeout_override or 120)
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for attempt in range(retries):
+            try:
                 async with session.post(endpoint, json=payload, headers=headers) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -438,23 +447,22 @@ async def _call_openrouter(
                                 model=model,
                                 attempt=f"{attempt + 1}/{retries}",
                             )
-                            _record_failure(model)
+                            await record_failure_async(model)
                             if attempt < retries - 1:
                                 await asyncio.sleep(2 ** attempt)
                                 continue
                             return ""
-                        _record_success(model)
+                        await record_success_async(model)
                         return content.strip()
 
                     # Capture full error details for debug reporting
                     error_body = await resp.text()
                     # Sanitize to avoid leaking auth tokens in stored error state
-                    import re as _re
-                    _sanitized = _re.sub(
+                    _sanitized = re.sub(
                         r'(Bearer\s+|api[_-]?key["\s:=]+)[^\s"]+',
                         r'\1[REDACTED]',
                         error_body[:1000],
-                        flags=_re.IGNORECASE,
+                        flags=re.IGNORECASE,
                     )
                     _last_api_error.update({
                         "status": resp.status,
@@ -476,25 +484,119 @@ async def _call_openrouter(
                         await asyncio.sleep(wait)
                         continue
 
-                    _record_failure(model)
+                    await record_failure_async(model)
                     if attempt < retries - 1:
                         await asyncio.sleep(2 ** attempt)
                         continue
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            _record_failure(model)
-            _last_api_error.update({
-                "status": 0,
-                "model": model,
-                "endpoint": endpoint,
-                "body": str(e)[:1000],
-                "attempt": attempt + 1,
-            })
-            if attempt < retries - 1:
-                logger.warning("OpenRouter error", error=str(e), attempt=attempt)
-                await asyncio.sleep(2 ** attempt)
-                continue
-            logger.warning("OpenRouter failed after retries", error=str(e))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                await record_failure_async(model)
+                _last_api_error.update({
+                    "status": 0,
+                    "model": model,
+                    "endpoint": endpoint,
+                    "body": str(e)[:1000],
+                    "attempt": attempt + 1,
+                })
+                if attempt < retries - 1:
+                    logger.warning("OpenRouter error", error=str(e), attempt=attempt)
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                logger.warning("OpenRouter failed after retries", error=str(e))
 
     return ""
+
+
+async def _call_openrouter_stream(
+    messages: List[Dict[str, Any]],
+    model: str,
+    max_tokens: int,
+    temperature: float,
+) -> AsyncIterator[str]:
+    """Stream OpenRouter API response via SSE. Yields text chunks."""
+    from src.llm.openrouter import _is_circuit_open_async, record_failure_async, record_success_async, _wait_for_rate_limit, _update_rate_limits
+
+    api_key = _openrouter_config.get("api_key", "").strip()
+    base_url = _openrouter_config.get("base_url", "https://openrouter.ai/api/v1").rstrip("/")
+    endpoint = f"{base_url}/chat/completions"
+
+    if not api_key or not model or await _is_circuit_open_async(model):
+        return
+
+    await _wait_for_rate_limit()
+
+    # Free-tier enforcement
+    if ":free" not in model:
+        model = (model.rsplit(":", 1)[0] if ":" in model and "/" in model.split(":")[0] else model) + ":free"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://openclaw.bot",
+        "X-Title": "OpenClaw_Autonomous_Agent",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    timeout = aiohttp.ClientTimeout(total=120)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(endpoint, json=payload, headers=headers) as resp:
+                _update_rate_limits(dict(resp.headers))
+                if resp.status != 200:
+                    await record_failure_async(model)
+                    return
+
+                stream_ok = False
+                async for line in resp.content:
+                    decoded = line.decode("utf-8", errors="ignore").strip()
+                    if not decoded.startswith("data: "):
+                        continue
+                    data_str = decoded[6:]
+                    if data_str == "[DONE]":
+                        stream_ok = True
+                        break
+                    try:
+                        data = json.loads(data_str)
+                        delta = data.get("choices", [{}])[0].get("delta", {})
+                        chunk = delta.get("content", "")
+                        if chunk:
+                            yield chunk
+                    except (json.JSONDecodeError, IndexError):
+                        continue
+
+                if stream_ok:
+                    await record_success_async(model)
+                else:
+                    await record_failure_async(model)
+    except Exception as e:
+        await record_failure_async(model)
+        logger.warning("OpenRouter stream failed", model=model, error=str(e))
+
+
+async def stream_route_llm(
+    prompt: str,
+    *,
+    system: str = "",
+    model: str = "",
+    max_tokens: int = 2048,
+    temperature: float = 0.3,
+) -> AsyncIterator[str]:
+    """Streaming variant of route_llm — yields text chunks from OpenRouter SSE."""
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    selected_model = model or _gateway_config.get("system", {}).get("model_router", {}).get("general", "")
+    if not selected_model:
+        return
+
+    async for chunk in _call_openrouter_stream(messages, selected_model, max_tokens, temperature):
+        yield chunk

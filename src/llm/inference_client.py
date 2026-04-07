@@ -212,7 +212,7 @@ async def call_llm(
             except Exception as e:
                 return f"❌ Error: {e}"
 
-    from src.task_queue import model_queue
+    from src.core.task_queue import model_queue
 
     return await model_queue.enqueue(model, _run_inference)
 

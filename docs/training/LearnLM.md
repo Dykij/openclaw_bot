@@ -80,7 +80,7 @@
 
 **Модели для дистилляции** (из `config/openclaw_config.json`):
 
-- `nvidia/nemotron-3-super-120b-a12b:free` — основная генерация (120B параметров)
+- `qwen/qwen3.6-plus:free` — основная генерация (120B параметров)
 - `qwen/qwen3.6-plus-preview:free` — код и инструменты (#3 в программировании)
 - `stepfun/step-3.5-flash:free` — исследования и анализ
 - `z-ai/glm-4.5-air:free` — агентные задачи
@@ -1373,14 +1373,14 @@ A: `python -c "from peft import PeftConfig; c = PeftConfig.from_pretrained('/mnt
 
 ### Облачные модели для дистилляции (model_router, 2026-04-01) ✨
 
-| Задача                 | Модель                                 | Назначение              |
-| ---------------------- | -------------------------------------- | ----------------------- |
-| general, risk_analysis | nvidia/nemotron-3-super-120b-a12b:free | Генерация, оценка, DPO  |
-| code, tool_execution   | qwen/qwen3.6-plus-preview:free         | Код и инструменты       |
-| research               | stepfun/step-3.5-flash:free            | Исследования и анализ   |
-| agent                  | z-ai/glm-4.5-air:free                  | Агентные задачи         |
-| data_parsing, intent   | arcee-ai/trinity-mini:free             | Парсинг и классификация |
-| vision                 | nvidia/nemotron-nano-12b-v2-vl:free    | Визуальные задачи       |
+| Задача                 | Модель                              | Назначение              |
+| ---------------------- | ----------------------------------- | ----------------------- |
+| general, risk_analysis | qwen/qwen3.6-plus:free              | Генерация, оценка, DPO  |
+| code, tool_execution   | qwen/qwen3.6-plus-preview:free      | Код и инструменты       |
+| research               | stepfun/step-3.5-flash:free         | Исследования и анализ   |
+| agent                  | z-ai/glm-4.5-air:free               | Агентные задачи         |
+| data_parsing, intent   | qwen/qwen3.6-plus:free              | Парсинг и классификация |
+| vision                 | nvidia/nemotron-nano-12b-v2-vl:free | Визуальные задачи       |
 
 ### Трекер прогресса
 

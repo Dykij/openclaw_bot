@@ -56,9 +56,9 @@ DeepResearchPipeline
 
 ## Модели
 
-- **Researcher**: `arcee-ai/trinity-large-preview:free` (research)
-- **Analyst**: `arcee-ai/trinity-large-preview:free` (tool_execution)
-- **Summarizer**: `arcee-ai/trinity-mini:free` (expand)
+- **Researcher**: `qwen/qwen3.6-plus:free` (research)
+- **Analyst**: `qwen/qwen3.6-plus:free` (tool_execution)
+- **Summarizer**: `qwen/qwen3.6-plus:free` (expand)
 
 ## Связи
 

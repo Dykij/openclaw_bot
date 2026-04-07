@@ -9,7 +9,9 @@ Extracted from llm_gateway.py for modularity.
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Optional
@@ -51,16 +53,28 @@ class ApprovalRequest:
     estimated_cost: float = 0.0
     status: str = "PENDING_APPROVAL"  # PENDING_APPROVAL | APPROVED | REJECTED | EDITED
     edited_prompt: Optional[str] = None
+    created_at: float = field(default_factory=time.time)
+    _resolved: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def approve(self) -> None:
         self.status = "APPROVED"
+        self._resolved.set()
 
     def reject(self) -> None:
         self.status = "REJECTED"
+        self._resolved.set()
 
     def edit(self, new_prompt: str) -> None:
         self.status = "EDITED"
         self.edited_prompt = new_prompt
+        self._resolved.set()
+
+    async def wait(self, timeout: float = 300) -> None:
+        """Wait for human decision. Non-blocking — uses asyncio.Event."""
+        try:
+            await asyncio.wait_for(self._resolved.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass  # status stays PENDING_APPROVAL, caller handles it
 
 
 # Active approval requests keyed by request_id
@@ -121,3 +135,17 @@ def assess_risk(prompt: str, estimated_cost: float = 0.0) -> Optional[ApprovalRe
     _pending_approvals[req.request_id] = req
     logger.warning("HITL approval gate triggered", request_id=req.request_id, reasons=reasons)
     return req
+
+
+def cleanup_stale_approvals(max_age_sec: float = 600) -> int:
+    """Remove resolved or expired approval requests older than max_age_sec."""
+    now = time.time()
+    stale = [
+        rid for rid, req in _pending_approvals.items()
+        if req.status != "PENDING_APPROVAL" or (now - req.created_at) > max_age_sec
+    ]
+    for rid in stale:
+        del _pending_approvals[rid]
+    if stale:
+        logger.info("hitl_cleanup", removed=len(stale))
+    return len(stale)

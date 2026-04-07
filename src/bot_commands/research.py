@@ -25,9 +25,9 @@ async def cmd_research(gateway, message: Message):
             pass
 
     try:
-        from src.deep_research import DeepResearchPipeline
-        router = gateway.config["system"]["model_router"]
-        research_model = router.get("research", router.get("general", "meta-llama/llama-3.3-70b-instruct:free"))
+        from src.research._core import DeepResearchPipeline
+        router = gateway.config.get("system", {}).get("model_router", {})
+        research_model = router.get("research", router.get("general", "qwen/qwen3.6-plus:free"))
         dr = DeepResearchPipeline(
             model=research_model,
             mcp_client=gateway.pipeline.openclaw_mcp,

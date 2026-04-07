@@ -137,9 +137,9 @@ class TrainingRunner:
         # Default models from openclaw_config.json
         self._models = models or {
             "code": "qwen/qwen3.6-plus-preview:free",
-            "general": "nvidia/nemotron-3-super-120b-a12b:free",
+            "general": "qwen/qwen3.6-plus:free",
             "research": "stepfun/step-3.5-flash:free",
-            "creative": "nvidia/nemotron-3-super-120b-a12b:free",
+            "creative": "qwen/qwen3.6-plus:free",
         }
 
         # Components

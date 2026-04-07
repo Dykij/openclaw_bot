@@ -136,7 +136,7 @@ async def test_boot():
         or_cfg = config.get("system", {}).get("openrouter", {})
         api_key = or_cfg.get("api_key", "")
         base_url = or_cfg.get("base_url", "https://openrouter.ai/api/v1").rstrip("/")
-        model = config.get("system", {}).get("model_router", {}).get("general", "meta-llama/llama-3.3-70b-instruct:free")
+        model = config.get("system", {}).get("model_router", {}).get("general", "qwen/qwen3.6-plus:free")
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
                    "HTTP-Referer": "https://openclaw.ai", "X-Title": "OpenClaw Phase-A Test"}
         payload = {"model": model, "messages": [{"role": "user", "content": "Say hello in one word."}],

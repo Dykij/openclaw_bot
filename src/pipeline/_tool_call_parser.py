@@ -282,6 +282,13 @@ async def execute_parsed_tool_calls(
                     "success": yt_result.success,
                     "output": yt_result.to_context()[:2000],
                 })
+            elif call.name == "sandbox_list_skills" and sandbox:
+                skills_list = sandbox.skill_library.list_skills()
+                results.append({
+                    "tool": call.name,
+                    "success": True,
+                    "output": str(skills_list)[:2000],
+                })
             elif mcp_client and hasattr(mcp_client, "call_tool"):
                 tool_output = await mcp_client.call_tool(call.name, call.arguments)
                 results.append({

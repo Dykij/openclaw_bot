@@ -290,7 +290,7 @@ gog gmail watch start \
 {
   hooks: {
     gmail: {
-      model: "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+      model: "openrouter/qwen/qwen3.6-plus:free",
       thinking: "off",
     },
   },

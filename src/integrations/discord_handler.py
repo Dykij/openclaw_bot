@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 import structlog
 
 if TYPE_CHECKING:
-    from src.pipeline_executor import PipelineExecutor
+    from src.pipeline._core import PipelineExecutor
 
 logger = structlog.get_logger("DiscordHandler")
 

@@ -9,7 +9,8 @@ from collections import Counter
 from typing import Any, Dict, List, Optional
 
 # Ensure project root is on sys.path for subprocess execution
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# __file__ = src/mcp_tools/memory_search.py → dirname x3 = project root
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
@@ -34,7 +35,7 @@ from src.llm.gateway import route_llm, is_cloud_only
 def _ensure_gateway_configured():
     """Configure llm_gateway from config if not already done (subprocess context)."""
     try:
-        import src.llm_gateway as _gw
+        import src.llm.gateway as _gw
         if _gw._configured:
             return
         cfg_path = os.path.join(_project_root, "config", "openclaw_config.json")
@@ -68,10 +69,10 @@ def _get_running_model() -> str:
             with open(CONFIG_PATH, "r") as f:
                 cfg = json.loads(os.path.expandvars(f.read()))
             return cfg.get("system", {}).get("model_router", {}).get("general",
-                                                                        "meta-llama/llama-3.3-70b-instruct:free")
+                                                                        "qwen/qwen3.6-plus:free")
     except Exception:
         pass
-    return "meta-llama/llama-3.3-70b-instruct:free"
+    return "qwen/qwen3.6-plus:free"
 
 async def get_embeddings(text: str) -> List[float]:
     """Get embeddings for a text snippet.
@@ -247,9 +248,10 @@ async def search_memory(query: str, tier: str = "all", top_k: int = 3) -> str:
             continue
         for q in expanded_queries:
             try:
-                result = subprocess.run(
+                result = await asyncio.to_thread(
+                    subprocess.run,
                     ["rg", "-i", "-C", "2", "--no-heading", q, file_path],
-                    capture_output=True, text=True, timeout=5
+                    capture_output=True, text=True, timeout=5,
                 )
                 if result.stdout:
                     rg_matches.append(result.stdout)

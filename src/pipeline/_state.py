@@ -89,7 +89,7 @@ def init_smart_router(config: Dict[str, Any], force_cloud: bool) -> Optional[Sma
 
     Reuses the shared instance from llm_gateway if already configured.
     """
-    from src.llm_gateway import _smart_router as shared_router
+    from src.llm.gateway import _smart_router as shared_router
 
     if shared_router is not None:
         logger.info("SmartModelRouter: reusing shared instance from LLMGateway")

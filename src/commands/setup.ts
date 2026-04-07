@@ -16,11 +16,30 @@ async function readConfigFileRaw(configPath: string): Promise<{
   exists: boolean;
   parsed: OpenClawConfig;
 }> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(configPath, "utf-8");
+    raw = await fs.readFile(configPath, "utf-8");
+  } catch (err) {
+    // ENOENT is expected for first-time setup; other I/O errors are noteworthy.
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code !== "ENOENT"
+    ) {
+      console.warn(
+        `[setup] failed to read config ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return { exists: false, parsed: {} };
+  }
+  try {
     const parsed = safeParseWithSchema(JsonRecordSchema, JSON5.parse(raw));
     return { exists: true, parsed: (parsed ?? {}) as OpenClawConfig };
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[setup] failed to parse config ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return { exists: false, parsed: {} };
   }
 }

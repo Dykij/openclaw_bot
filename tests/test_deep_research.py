@@ -242,15 +242,21 @@ def test_detect_contradictions_single_evidence():
 
 
 def test_estimate_confidence():
+    """v7 hybrid: 5-signal weighted confidence, not raw LLM score."""
     llm = _make_fake_llm(["0.85"])
     result = asyncio.run(estimate_confidence(llm, "q", "report", ["ev1"]))
-    assert result == 0.85
+    # volume=0.083*0.20, diversity=0*0.20, contradiction=1.0*0.15,
+    # coverage=0*0.25, llm=0.85*0.20 → 0.337
+    assert result == 0.337
 
 
 def test_estimate_confidence_fallback():
+    """When LLM returns non-number, llm_score defaults to 0.5."""
     llm = _make_fake_llm(["not a number"])
     result = asyncio.run(estimate_confidence(llm, "q", "report", ["ev1"]))
-    assert result == 0.5
+    # volume=0.083*0.20, diversity=0*0.20, contradiction=1.0*0.15,
+    # coverage=0*0.25, llm=0.5*0.20 → 0.267
+    assert result == 0.267
 
 
 def test_estimate_confidence_clamped():

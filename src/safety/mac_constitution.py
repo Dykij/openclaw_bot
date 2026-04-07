@@ -93,7 +93,7 @@ class MACConstitution:
         model: str = "",
         enabled: bool = True,
     ):
-        self.model = model or "google/gemma-3-12b-it:free"
+        self.model = model or "qwen/qwen3.6-plus:free"
         self.enabled = enabled
         self._state: Optional[MACState] = None
         self._last_refresh: float = 0.0

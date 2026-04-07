@@ -12,34 +12,34 @@
         "api": "openai-responses",
         "models": [
           {
-            "id": "meta-llama/llama-3.3-70b-instruct:free",
-            "name": "Llama 3.3 70B (Planner/General)",
-            "reasoning": false,
+            "id": "qwen/qwen3.6-plus:free",
+            "name": "Qwen 3.6 Plus (Primary/All-Purpose)",
+            "reasoning": true,
             "input": ["text"],
-            "contextWindow": 131072,
+            "contextWindow": 1000000,
+            "maxTokens": 65536
+          },
+          {
+            "id": "nvidia/nemotron-nano-12b-v2-vl:free",
+            "name": "Nemotron Nano 12B VL (Vision)",
+            "reasoning": false,
+            "input": ["text", "image"],
+            "contextWindow": 32768,
             "maxTokens": 4096
           },
           {
             "id": "deepseek/deepseek-r1:free",
-            "name": "DeepSeek R1 (Analytical/Reasoning)",
+            "name": "DeepSeek R1 (Fallback/Reasoning)",
             "reasoning": true,
             "input": ["text"],
             "contextWindow": 131072,
             "maxTokens": 4096
           },
           {
-            "id": "qwen/qwen-2.5-coder-32b-instruct:free",
-            "name": "Qwen 2.5 Coder 32B (Executor/Coding)",
-            "reasoning": false,
-            "input": ["text"],
-            "contextWindow": 32768,
-            "maxTokens": 4096
-          },
-          {
             "id": "google/gemma-3-27b-it:free",
-            "name": "Gemma 3 27B (Archivist/Summary)",
+            "name": "Gemma 3 27B (Fallback/Vision)",
             "reasoning": false,
-            "input": ["text"],
+            "input": ["text", "image"],
             "contextWindow": 131072,
             "maxTokens": 4096
           }
@@ -50,21 +50,21 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "meta-llama/llama-3.3-70b-instruct:free",
-        "fallbacks": ["deepseek/deepseek-r1:free", "qwen/qwen-2.5-coder-32b-instruct:free"]
+        "primary": "qwen/qwen3.6-plus:free",
+        "fallbacks": ["deepseek/deepseek-r1:free", "nvidia/nemotron-nano-12b-v2-vl:free"]
       },
       "models": {
-        "meta-llama/llama-3.3-70b-instruct:free": {
-          "alias": "Planner/General"
+        "qwen/qwen3.6-plus:free": {
+          "alias": "Primary/All-Purpose"
         },
         "deepseek/deepseek-r1:free": {
-          "alias": "Auditor/Reasoning"
+          "alias": "Fallback/Reasoning"
         },
-        "qwen/qwen-2.5-coder-32b-instruct:free": {
-          "alias": "Executor/Coding"
+        "nvidia/nemotron-nano-12b-v2-vl:free": {
+          "alias": "Vision"
         },
         "google/gemma-3-27b-it:free": {
-          "alias": "Archivist/Summary"
+          "alias": "Fallback/Vision"
         }
       },
       "compaction": {
@@ -112,7 +112,7 @@
     "mode": "local",
     "auth": {
       "mode": "token",
-      "token": "${GATEWAY_AUTH_TOKEN}"
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
     }
   }
 }

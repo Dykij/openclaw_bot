@@ -73,22 +73,12 @@ export function readBundledChannelCatalog(
   extensionsDirOverride: string = extensionsDir,
 ): BundledChannelCatalog {
   const entries: ExtensionChannelEntry[] = [];
-<<<<<<< HEAD
-  try {
-    const dirEntries = readdirSync(extensionsDir, { withFileTypes: true });
-    for (const dirEntry of dirEntries) {
-      if (!dirEntry.isDirectory()) {
-        continue;
-      }
-    const packageJsonPath = path.join(extensionsDir, dirEntry.name, "package.json");
-=======
   const signature = createHash("sha1");
   for (const dirEntry of readdirSync(extensionsDirOverride, { withFileTypes: true })) {
     if (!dirEntry.isDirectory()) {
       continue;
     }
     const packageJsonPath = path.join(extensionsDirOverride, dirEntry.name, "package.json");
->>>>>>> upstream/main
     try {
       const raw = readFileSync(packageJsonPath, "utf8");
       signature.update(`${dirEntry.name}\0${raw}\0`);
@@ -116,14 +106,6 @@ export function readBundledChannelCatalog(
       // Ignore malformed or missing extension package manifests.
     }
   }
-<<<<<<< HEAD
-  } catch {
-    // extensionsDir does not exist or is not readable.
-  }
-  return entries
-    .toSorted((a, b) => (a.order === b.order ? a.label.localeCompare(b.label) : a.order - b.order))
-    .map((entry) => entry.id);
-=======
   return {
     ids: entries
       .toSorted((a, b) =>
@@ -132,7 +114,6 @@ export function readBundledChannelCatalog(
       .map((entry) => entry.id),
     signature: signature.digest("hex"),
   };
->>>>>>> upstream/main
 }
 
 export function readBundledChannelCatalogIds(

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import {
-    createServer as createHttpServer,
-    type Server as HttpServer,
-    type IncomingMessage,
-    type ServerResponse,
+  createServer as createHttpServer,
+  type Server as HttpServer,
+  type IncomingMessage,
+  type ServerResponse,
 } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { TlsOptions } from "node:tls";
@@ -17,67 +17,45 @@ import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveHookExternalContentSource as resolveHookExternalContentSourceFromSession } from "../security/external-content.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
 import {
-    AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
-    createAuthRateLimiter,
-    normalizeRateLimitClientIp,
-    type AuthRateLimiter,
+  AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
+  createAuthRateLimiter,
+  normalizeRateLimitClientIp,
+  type AuthRateLimiter,
 } from "./auth-rate-limit.js";
-<<<<<<< HEAD
-import { type GatewayAuthResult, type ResolvedGatewayAuth } from "./auth.js";
-import { createBrigadeHttpHandler } from "./brigade-hook.js";
-=======
 import {
   authorizeHttpGatewayConnect,
   isLocalDirectRequest,
   type GatewayAuthResult,
   type ResolvedGatewayAuth,
 } from "./auth.js";
->>>>>>> upstream/main
+import { createBrigadeHttpHandler } from "./brigade-hook.js";
 import { normalizeCanvasScopedUrl } from "./canvas-capability.js";
 import {
-    handleControlUiAvatarRequest,
-    handleControlUiHttpRequest,
-    type ControlUiRootState,
+  handleControlUiAvatarRequest,
+  handleControlUiHttpRequest,
+  type ControlUiRootState,
 } from "./control-ui.js";
 import { handleOpenAiEmbeddingsHttpRequest } from "./embeddings-http.js";
 import { applyHookMappings } from "./hooks-mapping.js";
 import {
-<<<<<<< HEAD
-    extractHookToken,
-    getHookAgentPolicyError,
-    getHookChannelError,
-    isHookAgentAllowed,
-    normalizeAgentPayload,
-    normalizeHookDispatchSessionKey,
-    normalizeHookHeaders,
-    normalizeWakePayload,
-    readJsonBody,
-    resolveHookChannel,
-    resolveHookDeliver,
-    resolveHookSessionKey,
-    resolveHookTargetAgentId,
-    type HookAgentDispatchPayload,
-    type HooksConfigResolved,
-=======
   extractHookToken,
   getHookAgentPolicyError,
   getHookChannelError,
   getHookSessionKeyPrefixError,
-  type HookAgentDispatchPayload,
-  type HooksConfigResolved,
   isHookAgentAllowed,
   isSessionKeyAllowedByPrefix,
   normalizeAgentPayload,
+  normalizeHookDispatchSessionKey,
   normalizeHookHeaders,
-  resolveHookIdempotencyKey,
   normalizeWakePayload,
   readJsonBody,
-  normalizeHookDispatchSessionKey,
-  resolveHookSessionKey,
-  resolveHookTargetAgentId,
   resolveHookChannel,
   resolveHookDeliver,
->>>>>>> upstream/main
+  resolveHookIdempotencyKey,
+  resolveHookSessionKey,
+  resolveHookTargetAgentId,
+  type HookAgentDispatchPayload,
+  type HooksConfigResolved,
 } from "./hooks.js";
 import { sendGatewayAuthFailure, setDefaultSecurityHeaders } from "./http-common.js";
 import {
@@ -89,22 +67,14 @@ import { handleOpenAiModelsHttpRequest } from "./models-http.js";
 import { resolveRequestClientIp } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
-<<<<<<< HEAD
-import {
-    authorizeCanvasRequest,
-    enforcePluginRouteGatewayAuth,
-    isCanvasPath,
-} from "./server/http-auth.js";
-=======
 import { DEDUPE_MAX, DEDUPE_TTL_MS } from "./server-constants.js";
 import { authorizeCanvasRequest, isCanvasPath } from "./server/http-auth.js";
 import { resolvePluginRouteRuntimeOperatorScopes } from "./server/plugin-route-runtime-scopes.js";
->>>>>>> upstream/main
 import {
-    isProtectedPluginRoutePathFromContext,
-    resolvePluginRoutePathContext,
-    type PluginHttpRequestHandler,
-    type PluginRoutePathContext,
+  isProtectedPluginRoutePathFromContext,
+  resolvePluginRoutePathContext,
+  type PluginHttpRequestHandler,
+  type PluginRoutePathContext,
 } from "./server/plugins-http.js";
 import type { PreauthConnectionBudget } from "./server/preauth-connection-budget.js";
 import type { ReadinessChecker } from "./server/readiness.js";
@@ -274,23 +244,19 @@ function writeUpgradeAuthFailure(
   if (auth.rateLimited) {
     const retryAfterSeconds =
       auth.retryAfterMs && auth.retryAfterMs > 0 ? Math.ceil(auth.retryAfterMs / 1000) : undefined;
-    socket.write(
-      [
-        "HTTP/1.1 429 Too Many Requests",
-        retryAfterSeconds ? `Retry-After: ${retryAfterSeconds}` : undefined,
-        "Content-Type: application/json; charset=utf-8",
-        "Connection: close",
-        "",
-        JSON.stringify({
-          error: {
-            message: "Too many failed authentication attempts. Please try again later.",
-            type: "rate_limited",
-          },
-        }),
-      ]
-        .filter(Boolean)
-        .join("\r\n"),
-    );
+    const body = JSON.stringify({
+      error: {
+        message: "Too many failed authentication attempts. Please try again later.",
+        type: "rate_limited",
+      },
+    });
+    const headerLines = [
+      "HTTP/1.1 429 Too Many Requests",
+      retryAfterSeconds ? `Retry-After: ${retryAfterSeconds}` : undefined,
+      "Content-Type: application/json; charset=utf-8",
+      "Connection: close",
+    ].filter(Boolean);
+    socket.write(headerLines.join("\r\n") + "\r\n\r\n" + body);
     return;
   }
   socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
@@ -797,12 +763,8 @@ export function createGatewayHttpServer(opts: {
     rateLimiter,
     getReadiness,
   } = opts;
-<<<<<<< HEAD
   const handleBrigadeRequest = createBrigadeHttpHandler();
-
-=======
   const openAiCompatEnabled = openAiChatCompletionsEnabled || openResponsesEnabled;
->>>>>>> upstream/main
   const httpServer: HttpServer = opts.tlsOptions
     ? createHttpsServer(opts.tlsOptions, (req, res) => {
         void handleRequest(req, res);
@@ -1024,9 +986,13 @@ export function createGatewayHttpServer(opts: {
       res.end("Not Found");
     } catch (err) {
       console.error("[gateway-http] unhandled error in request handler:", err);
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Internal Server Error");
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Internal Server Error");
+      } else if (!res.writableEnded) {
+        res.end();
+      }
     }
   }
 
@@ -1146,12 +1112,13 @@ export function attachGatewayUpgradeHandler(opts: {
             socket.off("close", releaseUpgradeBudget);
           }
         });
-      } catch {
+      } catch (upgradeErr) {
         socket.off("close", releaseUpgradeBudget);
         releaseUpgradeBudget();
-        throw new Error("gateway websocket upgrade failed");
+        throw upgradeErr;
       }
-    })().catch(() => {
+    })().catch((err) => {
+      console.warn("[gateway-http] websocket upgrade failed", String(err));
       socket.destroy();
     });
   });

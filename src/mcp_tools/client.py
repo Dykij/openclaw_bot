@@ -1,11 +1,16 @@
 import asyncio
 import contextlib
+import json
 import os
 import sys
 from typing import Any, Dict, List, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+import structlog
+
+logger = structlog.get_logger("MCPClient")
 
 # Get the path to the virtual environment python assuming it exists locally or using global if needed
 PYTHON_BIN = sys.executable
@@ -49,6 +54,8 @@ class OpenClawMCPClient:
             ("WebSearch", self._start_websearch_server),
             ("Shell", self._start_shell_server),
             ("CodeAnalysis", self._start_code_analysis_server),
+            ("GitOps", self._start_git_ops_server),
+            ("DockerOps", self._start_docker_ops_server),
         ]
         results = await asyncio.gather(
             *[self._start_server_safe(name, fn) for name, fn in starters],
@@ -207,7 +214,7 @@ class OpenClawMCPClient:
     async def _start_filesystem_server(self):
         """Starts Node.js @modelcontextprotocol/server-filesystem via npx"""
         print(f"[MCP] Starting Filesystem Server. Allowed dirs: {self.fs_allowed_dirs}")
-        
+
         args = ["-y", "@modelcontextprotocol/server-filesystem"] + self.fs_allowed_dirs
         server_params = StdioServerParameters(
             command="npx.cmd" if sys.platform == "win32" else "npx",
@@ -220,7 +227,7 @@ class OpenClawMCPClient:
             session = await self._exit_stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
             self._server_sessions.append(session)
-            
+
             # Fetch tools
             response = await session.list_tools()
             for tool in response.tools:
@@ -228,6 +235,49 @@ class OpenClawMCPClient:
             print("[MCP] Filesystem Server initialized successfully.")
         except Exception as e:
             print(f"[MCP Error] Failed to start Filesystem Server: {e}")
+
+    async def _start_git_ops_server(self):
+        """Starts custom Python MCP server for read-only git operations."""
+        print("[MCP] Starting Git Operations Server...")
+        server_params = StdioServerParameters(
+            command=PYTHON_BIN,
+            args=[os.path.join(os.path.dirname(__file__), "git_ops.py")],
+            env=None
+        )
+        try:
+            read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
+            session = await self._exit_stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+            self._server_sessions.append(session)
+
+            response = await session.list_tools()
+            for tool in response.tools:
+                self._register_tool(tool, session)
+            print("[MCP] Git Operations Server initialized successfully.")
+        except Exception as e:
+            print(f"[MCP Error] Failed to start Git Operations Server: {e}")
+
+    async def _start_docker_ops_server(self):
+        """Starts custom Python MCP server for read-only Docker operations."""
+        print("[MCP] Starting Docker Operations Server...")
+        server_params = StdioServerParameters(
+            command=PYTHON_BIN,
+            args=[os.path.join(os.path.dirname(__file__), "docker_ops.py")],
+            env=None
+        )
+        try:
+            read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
+            session = await self._exit_stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+            self._server_sessions.append(session)
+
+            response = await session.list_tools()
+            for tool in response.tools:
+                self._register_tool(tool, session)
+            print("[MCP] Docker Operations Server initialized successfully.")
+        except Exception as e:
+            print(f"[MCP Error] Failed to start Docker Operations Server: {e}")
+
 
     def _register_tool(self, tool_spec: Any, session: ClientSession):
         """Converts MCP tool specification into OpenAI-compatible payload for the LLM API."""
@@ -247,26 +297,53 @@ class OpenClawMCPClient:
 
     async def _request_consensus(self, tool_name: str, arguments: dict) -> bool:
         """
-        Request consensus from independent supervisor roles (Auditor, Risk Analyst).
-        This implements multi-agent voting (Phase 3.1).
+        Gate risky MCP tool execution via HITL approval.
+        When HITL is enabled, risky tools require human approval before execution.
+        When HITL is disabled, all tools are auto-approved.
         """
-        # In this context, we don't have direct access to the LLM call like PipelineExecutor.
-        # However, Phase 2.3 unified extensions, so we can define a "supervisory" MCP call 
-        # or simply log a gated event for Phase 3 logic.
-        print(f"[Consensus] Gating risky tool execution: {tool_name}")
-        
-        # Risky tools list (Phase 3.1)
-        risky_tools = [
-            "run_command", "write_to_file", "replace_file_content", 
-            "multi_replace_file_content", "execute_sql"
-        ]
-        
+        risky_tools = {
+            "run_command", "write_to_file", "replace_file_content",
+            "multi_replace_file_content", "execute_sql",
+        }
+
         if tool_name not in risky_tools:
             return True
 
-        # For MVP Phase 3, we auto-approve if running in 'authorized' mode
-        # or require a manual flag in the future.
-        return True
+        try:
+            from src.llm.hitl import assess_risk, _approval_callback
+
+            desc = f"MCP Tool: {tool_name} | Args: {json.dumps(arguments, ensure_ascii=False)[:500]}"
+            req = assess_risk(desc)
+
+            if req is None:
+                # HITL disabled or no risk detected
+                logger.info("consensus_auto_approved", tool=tool_name)
+                return True
+
+            # Send approval request to Telegram
+            if _approval_callback:
+                await _approval_callback(req)
+
+            # Wait for human decision (120s timeout for tool calls)
+            await req.wait(timeout=120)
+
+            if req.status == "APPROVED":
+                logger.info("consensus_approved", tool=tool_name)
+                return True
+            if req.status == "REJECTED":
+                logger.warning("consensus_rejected", tool=tool_name)
+                return False
+
+            # Timeout — reject destructive, auto-approve others
+            destructive = {"run_command", "execute_sql"}
+            if tool_name in destructive:
+                logger.warning("consensus_timeout_rejected", tool=tool_name)
+                return False
+            logger.info("consensus_timeout_auto_approved", tool=tool_name)
+            return True
+        except Exception as e:
+            logger.error("consensus_gate_error", tool=tool_name, error=str(e))
+            return True  # Fail open to avoid blocking pipeline
 
     async def call_tool(self, name: str, arguments: dict) -> str:
         """Execute a tool via the corresponding MCP server"""

@@ -75,7 +75,7 @@ class ResearchState:
     question: str
     complexity: str = "medium"
     evidence: List[EvidencePiece] = field(default_factory=list)
-    contradictions: List[str] = field(default_factory=list)
+    contradictions: List[Any] = field(default_factory=list)
     verified_facts: List[str] = field(default_factory=list)
     refuted_facts: List[str] = field(default_factory=list)
     confidence_score: float = 0.0
@@ -141,6 +141,7 @@ class DeepResearchPipeline:
     V3: OpenRouter primary, multi-source parsers, page enrichment, token budgeting.
     V4: DuckDuckGo news, multi-region search, instant answers, URL priority.
     V5: Evidence dedup, instant-answers pre-check, weighted synthesis, metadata export.
+    V7: Hybrid confidence, token budget control, search caching, vault integration.
     """
 
     def __init__(
@@ -149,7 +150,7 @@ class DeepResearchPipeline:
         mcp_client,
         openrouter_config: Optional[Dict[str, Any]] = None,
         openrouter_model: str = "",
-        
+        vault_bridge: Any = None,
     ):
         self.model = model
         self.mcp_client = mcp_client
@@ -162,6 +163,7 @@ class DeepResearchPipeline:
             or os.environ.get("OPENROUTER_RESEARCH_MODEL", "")
         )
         self._parsers_enabled = True
+        self._vault = vault_bridge  # v7: Optional ObsidianBridge
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -176,6 +178,23 @@ class DeepResearchPipeline:
         """
         self._research_context = []
         state = ResearchState(question=question)
+
+        # v7: Inject prior knowledge from Obsidian vault
+        if self._vault:
+            try:
+                vault_context = self._vault.get_relevant_context(question)
+                if vault_context:
+                    self._research_context.append(
+                        f"Контекст из базы знаний:\n{vault_context[:2000]}"
+                    )
+                    state.add_evidence(EvidencePiece(
+                        query=question, source_type="vault_knowledge",
+                        content=vault_context[:2000], confidence=0.7,
+                        perspective="prior_knowledge",
+                    ))
+                    logger.info("Vault context injected", chars=len(vault_context))
+            except Exception as e:
+                logger.debug("Vault context injection skipped", error=str(e))
 
         # Step 0a: Instant-answer pre-check (v5) — quick factual lookup
         instant_answer = ""
@@ -232,8 +251,11 @@ class DeepResearchPipeline:
                     parsers_enabled=self._parsers_enabled,
                 )
                 for sq in all_queries
-            ]
+            ],
+            return_exceptions=True,
         )
+        # Filter out failed searches
+        search_results = [r for r in search_results if not isinstance(r, Exception)]
 
         all_evidence: List[str] = []
         sources: List[str] = []
@@ -325,6 +347,7 @@ class DeepResearchPipeline:
         for iteration in range(max_iterations - 1):
             confidence = await estimate_confidence(
                 self._llm_call, question, report, all_evidence,
+                contradictions=state.contradictions,
             )
             state.confidence_score = confidence
             if confidence >= _CONFIDENCE_THRESHOLD:
@@ -353,8 +376,10 @@ class DeepResearchPipeline:
                         parsers_enabled=self._parsers_enabled,
                     )
                     for gq in gap_queries
-                ]
+                ],
+                return_exceptions=True,
             )
+            gap_results = [r for r in gap_results if not isinstance(r, Exception)]
             gap_evidence = [
                 f"[Gap query: {r['query']}]\nWeb: {r['web']}" for r in gap_results
             ]
@@ -371,6 +396,7 @@ class DeepResearchPipeline:
         # Step 7: Final confidence calibration
         state.confidence_score = await estimate_confidence(
             self._llm_call, question, report, all_evidence,
+            contradictions=state.contradictions,
         )
 
         # Step 8: Final fact-check pass
@@ -404,7 +430,7 @@ class DeepResearchPipeline:
                 evidence_texts = [ep.content for ep in state.evidence if ep.content]
                 scores_list = [scorer.score(text) for text in evidence_texts[:20]]
                 metrics_calc = ResearchQualityMetrics()
-                qm = metrics_calc.compute(report, evidence_texts, sources)
+                qm = metrics_calc.compute(state.question, report, sources)
                 quality_metrics_dict = {
                     "coverage": round(qm.coverage, 2),
                     "depth": round(qm.depth, 2),
@@ -431,7 +457,7 @@ class DeepResearchPipeline:
             contradictions=len(state.contradictions),
         )
 
-        return {
+        result_dict = {
             "report": final_check.get("report", report),
             "sources": sources,
             "iterations": total_iterations,
@@ -449,18 +475,54 @@ class DeepResearchPipeline:
             "quality_metrics": quality_metrics_dict,
         }
 
+        # v7: Persist results to Obsidian vault
+        if self._vault:
+            try:
+                self._vault.persist_research_results(result_dict)
+                logger.info("Research results persisted to vault")
+            except Exception as e:
+                logger.debug("Vault persistence skipped", error=str(e))
+
+        return result_dict
+
     # ------------------------------------------------------------------
     # LLM call with cumulative context — via Unified LLM Gateway
     # ------------------------------------------------------------------
+
+    # v7: approximate context window budget (chars ≈ tokens * 4)
+    _MAX_CONTEXT_CHARS = 100_000  # ~25K tokens, safe for most models
+
     async def _llm_call(
         self, system: str, user: str, max_tokens: int = 2048, retries: int = 2
     ) -> str:
-        """LLM inference via Unified LLM Gateway (handles OpenRouter routing)."""
+        """LLM inference via Unified LLM Gateway (handles OpenRouter routing).
+
+        v7: enforces total message size budget to prevent context window overflow.
+        """
         messages = [{"role": "system", "content": system}]
+        budget_used = len(system)
+
         if self._research_context:
             ctx = "\n".join(self._research_context[-6:])
-            messages.append({"role": "user", "content": f"Контекст исследования:\n{ctx}"})
-            messages.append({"role": "assistant", "content": "Понял, учитываю контекст."})
+            ctx_msg = f"Контекст исследования:\n{ctx}"
+            budget_used += len(ctx_msg) + 30  # +30 for assistant ack
+            if budget_used + len(user) < self._MAX_CONTEXT_CHARS:
+                messages.append({"role": "user", "content": ctx_msg})
+                messages.append({"role": "assistant", "content": "Понял, учитываю контекст."})
+            else:
+                # Truncate context to fit budget
+                available = self._MAX_CONTEXT_CHARS - len(system) - len(user) - 200
+                if available > 500:
+                    truncated_ctx = ctx[:available]
+                    messages.append({"role": "user", "content": f"Контекст:\n{truncated_ctx}"})
+                    messages.append({"role": "assistant", "content": "Понял."})
+
+        # Truncate user message if still over budget
+        total = sum(len(m["content"]) for m in messages) + len(user)
+        if total > self._MAX_CONTEXT_CHARS:
+            available = self._MAX_CONTEXT_CHARS - sum(len(m["content"]) for m in messages) - 100
+            user = user[:max(available, 500)] + "\n[...усечено для бюджета токенов]"
+
         messages.append({"role": "user", "content": user})
 
         return await route_llm(

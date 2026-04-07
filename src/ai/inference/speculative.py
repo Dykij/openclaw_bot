@@ -44,3 +44,31 @@ class PrefixCachingConfig:
     """Automatic KV-cache reuse config (historical, unused in cloud mode)."""
 
     enabled: bool = False
+
+
+def build_optimized_engine_args(
+    speculative: SpeculativeDecodingConfig | None = None,
+    chunked_prefill: ChunkedPrefillConfig | None = None,
+    prefix_caching: PrefixCachingConfig | None = None,
+) -> list[str]:
+    """Build vLLM CLI args from optimisation configs (historical, unused in cloud mode)."""
+    args: list[str] = []
+    if speculative and speculative.enabled:
+        if speculative.use_ngram:
+            args += [
+                "--speculative-model", "[ngram]",
+                "--num-speculative-tokens", str(speculative.num_speculative_tokens),
+                "--ngram-prompt-lookup-max", str(speculative.ngram_prompt_lookup_max),
+                "--ngram-prompt-lookup-min", str(speculative.ngram_prompt_lookup_min),
+            ]
+        else:
+            args += [
+                "--speculative-model", speculative.draft_model,
+                "--num-speculative-tokens", str(speculative.num_speculative_tokens),
+            ]
+    if chunked_prefill and chunked_prefill.enabled:
+        args += ["--enable-chunked-prefill",
+                 "--max-num-batched-tokens", str(chunked_prefill.max_num_batched_tokens)]
+    if prefix_caching and prefix_caching.enabled:
+        args += ["--enable-prefix-caching"]
+    return args

@@ -1,11 +1,14 @@
 """Photo, voice, video, and document media handlers."""
 
+import asyncio
 import base64
 import io
 
 import structlog
 from aiogram.types import Message
 from prometheus_client import Counter
+
+from src.handlers.prompt_handler import handle_prompt
 
 logger = structlog.get_logger("BotCommands.Media")
 
@@ -93,12 +96,13 @@ async def handle_voice(gateway, message: Message):
                 self.chat = original.chat
                 self.reply_to_message = None
                 self.bot = original.bot
+                self._original = original
 
             async def reply(self, *args, **kwargs):
-                return await original.reply(*args, **kwargs)
+                return await self._original.reply(*args, **kwargs)
 
         voice_msg = VoiceTextMessage(message, transcribed_text)
-        await gateway.handle_prompt(voice_msg)
+        await handle_prompt(gateway, voice_msg)
 
     except Exception as e:
         logger.error("Voice handler failed", error=str(e))
@@ -115,10 +119,13 @@ async def _transcribe_audio(gateway, audio_data: bytes) -> str:
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
             tmp.write(audio_data)
             tmp_path = tmp.name
-        result = subprocess.run(
-            ["whisper-cpp", "-m", "models/ggml-base.bin", "-f", tmp_path, "--output-txt"],
-            capture_output=True, text=True, timeout=30,
-        )
+
+        def _run_whisper_cli():
+            return subprocess.run(
+                ["whisper-cpp", "-m", "models/ggml-base.bin", "-f", tmp_path, "--output-txt"],
+                capture_output=True, text=True, timeout=30,
+            )
+        result = await asyncio.to_thread(_run_whisper_cli)
         os.unlink(tmp_path)
         txt_path = tmp_path + ".txt"
         if os.path.exists(txt_path):
@@ -138,8 +145,11 @@ async def _transcribe_audio(gateway, audio_data: bytes) -> str:
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
             tmp.write(audio_data)
             tmp_path = tmp.name
-        model = whisper.load_model("base")
-        result = model.transcribe(tmp_path, language="ru")
+
+        def _run_whisper_py():
+            model = whisper.load_model("base")
+            return model.transcribe(tmp_path, language="ru")
+        result = await asyncio.to_thread(_run_whisper_py)
         os.unlink(tmp_path)
         return result.get("text", "")
     except Exception as e:
@@ -196,12 +206,13 @@ async def handle_document(gateway, message: Message):
                 self.chat = original.chat
                 self.reply_to_message = None
                 self.bot = original.bot
+                self._original = original
 
             async def reply(self, *args, **kwargs):
-                return await original.reply(*args, **kwargs)
+                return await self._original.reply(*args, **kwargs)
 
         doc_msg = DocTextMessage(message, combined_prompt)
-        await gateway.handle_prompt(doc_msg)
+        await handle_prompt(gateway, doc_msg)
 
     except Exception as e:
         logger.error("Document handler failed", error=str(e))

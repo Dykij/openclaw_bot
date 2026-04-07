@@ -26,7 +26,7 @@ async def handle_planner_handoff(
     Returns True if the handoff was executed (caller should break the loop).
     """
     executor_model = executor.config.get("system", {}).get("model_router", {}).get(
-        "tool_execution", "meta-llama/llama-3.3-70b-instruct:free"
+        "tool_execution", "qwen/qwen3.6-plus:free"
     )
     executor_role_cfg = (
         executor.config.get("brigades", {}).get(brigade, {}).get("roles", {}).get("Executor_Tools", {})
@@ -47,9 +47,6 @@ async def handle_planner_handoff(
         await status_callback(executor_role, display_exec_model, "🛠 Исполнитель вызывает инструменты MCP...")
 
     executor_config = {"model": executor_model}
-    logger.info(f"DEBUG: active_mcp is {active_mcp}")
-    if active_mcp:
-        logger.info(f"DEBUG: active_mcp tool_route_map keys: {list(active_mcp._tool_route_map.keys())}")
 
     # --- Phase 6: ReAct reasoning for Executor_Tools ---
     react_tools = []
@@ -237,7 +234,7 @@ async def _execute_mcp_tool(active_mcp, executor_response: str) -> str:
 
             logger.info(f"Executing tool {tool_name} on MCP server with args: {tool_args}")
             tool_result = await active_mcp.call_tool(tool_name, tool_args)
-            print(f"\n[MCP RAW OUTPUT]: {tool_result}")
+            logger.debug("MCP tool result received", tool=tool_name)
             executor_response += f"\n\n[MCP Execution Result]:\n{tool_result}"
     except Exception as e:
         logger.error(f"Failed to execute tool on MCP: {e}")
@@ -250,9 +247,6 @@ async def _verify_proof_of_work(active_mcp, extracted_json_str: str) -> str:
     """Run Proof of Work verification via MCP. Returns result text or empty string."""
     pow_result = ""
     try:
-        if active_mcp and hasattr(active_mcp, '_tool_route_map'):
-            print(f"Available tools for verification: {list(active_mcp._tool_route_map.keys())}")
-
         lower_json = extracted_json_str.lower()
         if "sqlite" in lower_json or "table" in lower_json:
             query_result = await active_mcp.call_tool("list_tables", {})

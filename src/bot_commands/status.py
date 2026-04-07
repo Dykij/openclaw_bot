@@ -69,7 +69,7 @@ async def cmd_start(gateway, message: Message):
 
 
 async def cmd_status(gateway, message: Message, from_callback: bool = False):
-    if message.from_user.id != gateway.admin_id:
+    if message.from_user.id != gateway.admin_id and not from_callback:
         return
 
     brigade_names = list(gateway.config.get("brigades", {}).keys())

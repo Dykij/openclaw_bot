@@ -65,6 +65,6 @@ Runs: evaluate → improve → generate.
 
 Uses `config/openclaw_config.json` → `system.model_router`. All OpenRouter cloud (free tier):
 
-- nvidia/nemotron-3-super-120b-a12b:free (general, code)
-- arcee-ai/trinity-large-preview:free (research)
-- arcee-ai/trinity-mini:free (intent, parsing)
+- qwen/qwen3.6-plus:free (general, code)
+- qwen/qwen3.6-plus:free (research)
+- qwen/qwen3.6-plus:free (intent, parsing)

@@ -13,16 +13,66 @@ v5 improvements (2026-03-30):
   - Time-limited web search for recency-sensitive queries
   - Retry on empty results with broadened query
   - Academic search now returns structured metadata
+
+v7 improvements (2026-04-06):
+  - In-memory search cache with TTL to avoid duplicate queries
+  - Query deduplication via normalized lowercase comparison
 """
 
 import asyncio
-from typing import Any, Dict, List
+import hashlib
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
 from src.utils.async_utils import taskgroup_gather
 
 logger = structlog.get_logger("DeepResearch")
+
+
+# ---------------------------------------------------------------------------
+# v7: Search result cache (in-memory, TTL-based)
+# ---------------------------------------------------------------------------
+
+_CACHE_TTL_WEB = 3600       # 1 hour for web results
+_CACHE_TTL_ACADEMIC = 86400  # 24 hours for academic results
+_CACHE_MAX_SIZE = 500        # max cache entries before eviction
+
+_search_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+def _cache_key(query: str, source: str = "web") -> str:
+    """Generate a normalized cache key."""
+    normalized = query.strip().lower()
+    return hashlib.md5(f"{source}:{normalized}".encode()).hexdigest()
+
+
+def _cache_get(key: str, ttl: int) -> Optional[Any]:
+    """Get cached result if not expired."""
+    entry = _search_cache.get(key)
+    if entry is None:
+        return None
+    ts, value = entry
+    if time.time() - ts > ttl:
+        del _search_cache[key]
+        return None
+    return value
+
+
+def _cache_put(key: str, value: Any) -> None:
+    """Store result in cache, evicting oldest if over limit."""
+    if len(_search_cache) >= _CACHE_MAX_SIZE:
+        # Evict oldest entry
+        oldest_key = min(_search_cache, key=lambda k: _search_cache[k][0])
+        del _search_cache[oldest_key]
+    _search_cache[key] = (time.time(), value)
+
+
+def _normalize_query(query: str) -> str:
+    """Normalize query for deduplication (lowercase, strip, collapse whitespace)."""
+    import re
+    return re.sub(r"\s+", " ", query.strip().lower())
 
 
 async def search_sub_query(
@@ -97,20 +147,28 @@ async def web_search(
 ) -> str:
     """Execute web search via MCP tool with optional region and time filter.
 
-    v5: retry with broadened query on empty results.
+    v7: cache results to avoid duplicate queries within a session.
     """
+    key = _cache_key(f"{query}:{region}:{timelimit or ''}", "web")
+    cached = _cache_get(key, _CACHE_TTL_WEB)
+    if cached is not None:
+        logger.debug("web_search_cache_hit", query=query, region=region)
+        return cached
+
     try:
         kwargs: Dict[str, Any] = {"query": query, "max_results": 8, "region": region}
         if timelimit:
             kwargs["timelimit"] = timelimit
         result = await mcp_client.call_tool("web_search", kwargs)
         if result and result.strip() and "No results" not in result:
+            _cache_put(key, result)
             return result
         # v5: retry with broadened query (remove quotes, add context)
         if timelimit:
             kwargs.pop("timelimit")
             result = await mcp_client.call_tool("web_search", kwargs)
             if result and result.strip():
+                _cache_put(key, result)
                 return result
         return result if result else "No results found."
     except Exception as e:
@@ -154,10 +212,21 @@ async def memory_search(mcp_client: Any, query: str) -> str:
 
 
 async def academic_search(query: str) -> str:
-    """Search academic papers via the research_paper_parser APIs."""
+    """Search academic papers via the research_paper_parser APIs.
+
+    v7: cache results for 24 hours (academic papers don't change).
+    """
+    key = _cache_key(query, "academic")
+    cached = _cache_get(key, _CACHE_TTL_ACADEMIC)
+    if cached is not None:
+        logger.debug("academic_search_cache_hit", query=query)
+        return cached
+
     try:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _academic_search_sync, query)
+        if result:
+            _cache_put(key, result)
         return result
     except Exception as e:
         logger.debug("Academic search skipped", error=str(e))

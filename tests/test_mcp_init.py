@@ -1,20 +1,14 @@
-import sys
-import os
-import asyncio
+"""Smoke test: MCP client initialization via PipelineExecutor."""
 import json
 
-from src.pipeline_executor import PipelineExecutor
 
-async def main():
+async def test_mcp_init():
+    from src.pipeline._core import PipelineExecutor
+
     cfg = json.load(open("config/openclaw_config.json", encoding="utf-8"))
     pipeline = PipelineExecutor(config=cfg)
-    
-    print("Initializing...")
     await pipeline.initialize()
-    print("Initialization Done.")
-    
-    print("OpenClaw MCP Tools:", pipeline.openclaw_mcp.available_tools_openai)
-    print("OpenClaw MCP Route Map:", list(pipeline.openclaw_mcp._tool_route_map.keys()))
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    assert hasattr(pipeline, "openclaw_mcp"), "openclaw_mcp not initialized"
+    assert pipeline.openclaw_mcp.available_tools_openai is not None
+    assert len(pipeline.openclaw_mcp._tool_route_map) > 0, "No tools registered"

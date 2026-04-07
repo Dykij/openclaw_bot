@@ -1,8 +1,8 @@
 [
   {
     "agent_id": "Risk Manager",
-    "brigade": "Dmarket",
-    "model": "deepseek/deepseek-r1:free",
+    "brigade": "Dmarket-Dev",
+    "model": "qwen/qwen3.6-plus:free",
     "system_prompt": "Модель-предохранитель. Анализирует баланс и блокирует транзакции при нарушении риск-лимитов API DMarket.",
     "dependency_chains": ["Latency Monitor"],
     "skills": [
@@ -21,8 +21,8 @@
   },
   {
     "agent_id": "Latency Monitor",
-    "brigade": "Dmarket",
-    "model": "qwen/qwen-2.5-coder-32b-instruct:free",
+    "brigade": "Dmarket-Dev",
+    "model": "qwen/qwen3.6-plus:free",
     "system_prompt": "Эксперт по производительности. Ищет time.sleep и синхронные вызовы, заменяя их на asyncio и httpx.",
     "dependency_chains": ["Security Auditor"],
     "skills": [
@@ -41,10 +41,10 @@
   },
   {
     "agent_id": "Security Auditor",
-    "brigade": "Dmarket",
-    "model": "google/gemma-3-12b-it:free",
+    "brigade": "Dmarket-Dev",
+    "model": "qwen/qwen3.6-plus:free",
     "system_prompt": "Офицер безопасности. Сканирует код на наличие хардкода API-ключей и утечек .env в логи Telegram.",
-    "dependency_chains": ["Executor"],
+    "dependency_chains": ["Tool Smith"],
     "skills": [
       "clawhub",
       "coding-agent",
@@ -61,10 +61,10 @@
   },
   {
     "agent_id": "Tool Smith",
-    "brigade": "OpenClaw",
-    "model": "qwen/qwen-2.5-coder-32b-instruct:free",
+    "brigade": "OpenClaw-Core",
+    "model": "qwen/qwen3.6-plus:free",
     "system_prompt": "Автономный разработчик инструментов. Пишет новые Python-скрипты в папку /tools для расширения функций системы.",
-    "dependency_chains": ["Planner"],
+    "dependency_chains": [],
     "skills": [
       "clawhub",
       "coding-agent",
@@ -83,8 +83,8 @@
   },
   {
     "agent_id": "Memory Garbage Collector",
-    "brigade": "OpenClaw",
-    "model": "meta-llama/llama-3.3-70b-instruct:free",
+    "brigade": "OpenClaw-Core",
+    "model": "qwen/qwen3.6-plus:free",
     "system_prompt": "Чистильщик контекста. Выполняет суммаризацию диалогов и очистку context_window для предотвращения переполнения памяти.",
     "dependency_chains": ["Tool Smith"],
     "skills": [

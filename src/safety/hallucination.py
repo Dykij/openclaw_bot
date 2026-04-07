@@ -142,9 +142,11 @@ class MARCHProtocol:
         self,
         supermemory: Any = None,
         model: str = "",
+        vault_bridge: Any = None,
     ):
         self.supermemory = supermemory
         self.model = model
+        self._vault = vault_bridge  # v7: cross-check against Obsidian vault
 
     async def cross_verify_agents(
         self,
@@ -228,13 +230,28 @@ class MARCHProtocol:
     # ------------------------------------------------------------------
 
     async def _verify_claim(self, claim: EntityClaim) -> VerificationResult:
-        """Check a claim against SuperMemory. Returns verified/not.
+        """Check a claim against SuperMemory and Obsidian vault.
 
         v16.5 N6-fix: 'Not found in memory' is NOT a discrepancy — the model
         can generate new entities (function names, version numbers) that
         legitimately don't exist in the knowledge base yet.  Only mark as
         unverified when memory *contradicts* the claim.
+
+        v7: Also checks the Obsidian knowledge vault for supporting/contradicting evidence.
         """
+        # Phase 1: SuperMemory check
+        memory_result = await self._check_supermemory(claim)
+
+        # Phase 2: Vault check (v7) — only for claims not yet confirmed
+        if self._vault and not memory_result.verified:
+            vault_result = self._check_vault(claim)
+            if vault_result.verified:
+                return vault_result
+
+        return memory_result
+
+    async def _check_supermemory(self, claim: EntityClaim) -> VerificationResult:
+        """Check a claim against SuperMemory."""
         if not self.supermemory:
             # No memory available — assume verified (cannot contradict)
             return VerificationResult(
@@ -311,6 +328,57 @@ class MARCHProtocol:
                 ))
 
         return disc
+
+    # ------------------------------------------------------------------
+    # Private: vault-backed verification (v7)
+    # ------------------------------------------------------------------
+
+    def _check_vault(self, claim: EntityClaim) -> VerificationResult:
+        """Check a claim against the Obsidian knowledge vault.
+
+        Searches for the entity across vault notes and checks if content
+        supports or contradicts the claim.
+        """
+        if not self._vault:
+            return VerificationResult(
+                claim=claim,
+                verified=True,
+                memory_evidence="[no vault]",
+            )
+        try:
+            vault_results = self._vault.search(claim.entity)
+            if not vault_results:
+                return VerificationResult(
+                    claim=claim,
+                    verified=True,  # not found is not a discrepancy
+                    memory_evidence="[no vault matches]",
+                )
+
+            # Check top result for support/contradiction
+            top = vault_results[0]
+            content = top.content if hasattr(top, "content") else str(top)
+            entity_lower = claim.entity.lower()
+
+            if entity_lower in content.lower():
+                return VerificationResult(
+                    claim=claim,
+                    verified=True,
+                    memory_evidence=f"[vault] {content[:200]}",
+                )
+            else:
+                return VerificationResult(
+                    claim=claim,
+                    verified=False,
+                    memory_evidence=f"[vault] {content[:200]}",
+                    discrepancy=f"Entity '{claim.entity}' contradicted by vault evidence",
+                )
+        except Exception as e:
+            logger.debug("vault_verify_error", entity=claim.entity, error=str(e))
+            return VerificationResult(
+                claim=claim,
+                verified=True,
+                memory_evidence=f"[vault error: {e}]",
+            )
 
     # ------------------------------------------------------------------
     # Private: Reflexion correction on discrepancy

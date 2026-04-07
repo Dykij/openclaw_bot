@@ -82,7 +82,7 @@ class HallucinationDetector:
         r"|\b(\d{4})-(\d{2})-(\d{2})\b",
     )
 
-    def __init__(self, training_cutoff_date: str = "2025-10-01") -> None:
+    def __init__(self, training_cutoff_date: str = "2026-04-01") -> None:
         self.training_cutoff = datetime.strptime(training_cutoff_date, "%Y-%m-%d").replace(
             tzinfo=timezone.utc
         )

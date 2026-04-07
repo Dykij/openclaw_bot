@@ -46,7 +46,7 @@ async def run_single_step(
     if not role_config:
         return f"⚠️ Role '{role_name}' not found in config."
 
-    model = role_config.get("model", "meta-llama/llama-3.3-70b-instruct:free")
+    model = role_config.get("model", "qwen/qwen3.6-plus:free")
     system_prompt = build_role_prompt(role_name, role_config, framework_root)
 
     step_prompt = (

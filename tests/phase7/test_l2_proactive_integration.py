@@ -102,7 +102,6 @@ class TestRSSChecker:
         sched._rss_seen = set()
         return sched, pipeline
 
-    @pytest.mark.asyncio
     async def test_rss_detects_new_entries(self, scheduler):
         sched, pipeline = scheduler
         fake_result = make_feed_entries()
@@ -117,7 +116,6 @@ class TestRSSChecker:
         assert "ReAct Agents" in call["prompt"]
         assert "Multi-Agent" in call["prompt"]
 
-    @pytest.mark.asyncio
     async def test_rss_dedup_skips_seen(self, scheduler):
         sched, pipeline = scheduler
         fake_result = make_feed_entries()
@@ -134,7 +132,6 @@ class TestRSSChecker:
         # But entry-002 should be
         assert "Multi-Agent" in pipeline.calls[0]["prompt"]
 
-    @pytest.mark.asyncio
     async def test_rss_all_seen_no_dispatch(self, scheduler):
         sched, pipeline = scheduler
         fake_result = make_feed_entries()
@@ -147,7 +144,6 @@ class TestRSSChecker:
         # No new entries → no pipeline calls
         assert len(pipeline.calls) == 0
 
-    @pytest.mark.asyncio
     async def test_rss_handles_feed_error(self, scheduler):
         sched, pipeline = scheduler
         with patch("feedparser.parse", side_effect=Exception("Network error")):
@@ -155,7 +151,6 @@ class TestRSSChecker:
             await sched._check_rss_feeds(["https://broken.feed/rss"])
         assert len(pipeline.calls) == 0
 
-    @pytest.mark.asyncio
     async def test_rss_no_pipeline_noop(self):
         sched = OpenClawScheduler(config={}, pipeline=None)
         # Should not raise
@@ -174,7 +169,6 @@ class TestFileEventHandler:
         pipeline = FakePipeline()
         return OpenClawScheduler(config=config, pipeline=pipeline), pipeline
 
-    @pytest.mark.asyncio
     async def test_file_event_dispatches(self, scheduler):
         sched, pipeline = scheduler
         await sched._handle_file_event("/tmp/test.md", "modified")
@@ -183,13 +177,11 @@ class TestFileEventHandler:
         assert "File modified" in pipeline.calls[0]["prompt"]
         assert "/tmp/test.md" in pipeline.calls[0]["prompt"]
 
-    @pytest.mark.asyncio
     async def test_file_event_created(self, scheduler):
         sched, pipeline = scheduler
         await sched._handle_file_event("/data/new_file.json", "created")
         assert pipeline.calls[0]["prompt"].startswith("[Proactive] File created:")
 
-    @pytest.mark.asyncio
     async def test_file_event_no_pipeline_noop(self):
         sched = OpenClawScheduler(config={}, pipeline=None)
         # Should not raise
@@ -202,7 +194,6 @@ class TestFileEventHandler:
 class TestProactiveEngineInit:
     """Level 2c: Proactive Engine respects config and starts correctly."""
 
-    @pytest.mark.asyncio
     async def test_disabled_when_config_false(self):
         config = {"proactive": {"enabled": False}}
         sched = OpenClawScheduler(config=config, pipeline=FakePipeline())
@@ -210,13 +201,11 @@ class TestProactiveEngineInit:
         await sched._start_proactive_engine()
         assert not hasattr(sched, "_file_observer")
 
-    @pytest.mark.asyncio
     async def test_disabled_when_no_config(self):
         sched = OpenClawScheduler(config={}, pipeline=FakePipeline())
         await sched._start_proactive_engine()
         assert not hasattr(sched, "_file_observer")
 
-    @pytest.mark.asyncio
     async def test_watcher_starts_with_valid_dirs(self, tmp_path):
         watch_dir = str(tmp_path / "watch_me")
         os.makedirs(watch_dir)
@@ -232,7 +221,6 @@ class TestProactiveEngineInit:
         assert hasattr(sched, "_file_observer")
         sched._file_observer.stop()
 
-    @pytest.mark.asyncio
     async def test_watcher_skips_nonexistent_dirs(self, tmp_path):
         config = {
             "proactive": {

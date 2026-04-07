@@ -17,7 +17,7 @@ async def cmd_agents(gateway, message: Message):
     if message.from_user.id != gateway.admin_id:
         return
 
-    from src.agent_personas import AgentPersonaManager
+    from src.core.agent_personas import AgentPersonaManager
     mgr = AgentPersonaManager()
     personas = mgr.list_all()
 
@@ -55,7 +55,7 @@ async def cmd_agent(gateway, message: Message):
         await message.reply("Использование: `/agent <slug>`\nСписок: /agents", parse_mode="Markdown")
         return
 
-    from src.agent_personas import AgentPersonaManager
+    from src.core.agent_personas import AgentPersonaManager
     mgr = AgentPersonaManager()
     persona = mgr.get(slug)
 

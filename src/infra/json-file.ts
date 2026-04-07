@@ -97,10 +97,31 @@ function writeTempJsonFile(pathname: string, payload: string) {
 }
 
 export function loadJsonFile<T = unknown>(pathname: string): T | undefined {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(pathname, "utf8");
+    raw = fs.readFileSync(pathname, "utf8");
+  } catch (err) {
+    // File not found is expected in many call sites; only warn on unexpected I/O errors.
+    if (
+      !(
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      )
+    ) {
+      console.warn(
+        `[json-file] failed to read ${pathname}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return undefined;
+  }
+  try {
     return JSON.parse(raw) as T;
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[json-file] failed to parse JSON from ${pathname}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return undefined;
   }
 }

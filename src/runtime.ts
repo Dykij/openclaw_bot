@@ -19,6 +19,8 @@ function shouldEmitRuntimeLog(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.OPENCLAW_TEST_RUNTIME_LOG === "1") {
     return true;
   }
+  // Vitest attaches a `.mock` property to mocked functions; detect this to
+  // avoid cluttering test output with real console.log writes.
   const maybeMockedLog = console.log as unknown as { mock?: unknown };
   return typeof maybeMockedLog.mock === "object";
 }
@@ -39,7 +41,10 @@ function shouldEmitRuntimeStdout(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 function isPipeClosedError(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
+  if (!err || typeof err !== "object" || !("code" in err)) {
+    return false;
+  }
+  const code = (err as NodeJS.ErrnoException).code;
   return code === "EPIPE" || code === "EIO";
 }
 

@@ -16,6 +16,7 @@ from src.ai.inference.speculative import (
     ChunkedPrefillConfig,
     PrefixCachingConfig,
     SpeculativeDecodingConfig,
+    build_optimized_engine_args,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "SmartModelRouter",
     "SpeculativeDecodingConfig",
     "TokenBudget",
+    "build_optimized_engine_args",
 ]

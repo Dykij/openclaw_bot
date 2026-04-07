@@ -24,12 +24,12 @@ async def handle_callback_query(gateway, callback: CallbackQuery):
         await callback.answer()
     elif action == "cmd_test":
         await callback.answer("Запускаю VRAM тест...")
-        await cmd_test(gateway, callback.message)
+        await cmd_test(gateway, callback.message, from_callback=True)
     elif action == "cmd_history":
-        await cmd_history(gateway, callback.message)
+        await cmd_history(gateway, callback.message, from_callback=True)
         await callback.answer()
     elif action == "cmd_perf":
-        await cmd_perf(gateway, callback.message)
+        await cmd_perf(gateway, callback.message, from_callback=True)
         await callback.answer()
     else:
         await callback.answer()

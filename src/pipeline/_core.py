@@ -124,8 +124,6 @@ def _route_subtask(text: str) -> str:
     scores: dict[str, int] = {}
     for brigade, keywords in _BRIGADE_KEYWORDS.items():
         scores[brigade] = sum(1 for kw in keywords if kw in lower)
-    if not scores:
-        return "OpenClaw-Core"
     best = max(scores, key=scores.get)  # type: ignore[arg-type]
     return best if scores[best] > 0 else "OpenClaw-Core"
 
@@ -266,9 +264,10 @@ class PipelineExecutor:
         # Initialize MCP Clients dynamically
         framework_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         self._framework_root = framework_root
-        self.openclaw_mcp = OpenClawMCPClient(db_path=None, fs_allowed_dirs=[framework_root])
+        _default_db = os.path.join(framework_root, "data", "openclaw.db")
+        self.openclaw_mcp = OpenClawMCPClient(db_path=_default_db, fs_allowed_dirs=[framework_root])
 
-        dmarket_ws = config.get("brigades", {}).get("Dmarket", {}).get("workspace_dir", framework_root)
+        dmarket_ws = config.get("brigades", {}).get("Dmarket-Dev", {}).get("workspace_dir", framework_root)
         dmarket_ws = os.path.abspath(dmarket_ws) if os.path.isdir(os.path.abspath(dmarket_ws)) else framework_root
         self.dmarket_mcp = OpenClawMCPClient(db_path=None, fs_allowed_dirs=[dmarket_ws])
         self.brigade_mcp_map: Dict[str, OpenClawMCPClient] = {}
@@ -278,7 +277,7 @@ class PipelineExecutor:
         self.code_validator = CodeValidator(framework_root, config)
 
         # Reuse shared singletons from llm_gateway
-        from src.llm_gateway import get_metrics_collector, get_token_budget
+        from src.llm.gateway import get_metrics_collector, get_token_budget
         self.metrics_collector = get_metrics_collector() or InferenceMetricsCollector()
         vram_gb = config.get("system", {}).get("hardware", {}).get("vram_gb", 16.0)
         self.token_budget = get_token_budget() or AdaptiveTokenBudget(
@@ -290,56 +289,79 @@ class PipelineExecutor:
         self._supermemory = None
         self._rag_engine = None
 
-        # SmartModelRouter (delegated to _state.py)
-        self._smart_router = init_smart_router(config, self.force_cloud)
+        # SmartModelRouter: reuse shared instance from llm_gateway (v17.2 — avoid double init)
+        from src.llm.gateway import get_smart_router
+        self._smart_router = get_smart_router() or init_smart_router(config, self.force_cloud)
 
         self._react_reasoner = _get_shared_react()
         self._constitutional = _get_shared_constitutional()
         self._sandbox = _get_shared_sandbox()
 
-        # v11.7: LATS tree search + MARCH hallucination control
-        lats_model = self.config.get("model_router", {}).get(
-            "research", "meta-llama/llama-3.3-70b-instruct:free"
-        )
-        self._lats_engine = LATSEngine(model=lats_model)
-        self._march_protocol = _get_shared_march()
+        # v17.2: Lazy-init config for heavy engines (created on first use)
+        self._lats_engine = None
+        self._march_protocol = None
+        self._aflow = None
+        self._sage = None
+        self._mac = None
+        self._counterfactual = None
+        self._prorl = None
+        self._lazy_config = {
+            "lats_model": self.config.get("system", {}).get("model_router", {}).get("research", "qwen/qwen3.6-plus:free"),
+            "aflow_model": self.config.get("system", {}).get("model_router", {}).get("intent", "qwen/qwen3.6-plus:free"),
+            "sage_cfg": self.config.get("system", {}).get("sage", {}),
+            "mac_cfg": self.config.get("system", {}).get("mac", {}),
+            "mac_model": self.config.get("system", {}).get("model_router", {}).get("expand", "qwen/qwen3.6-plus:free"),
+            "cc_cfg": self.config.get("system", {}).get("counterfactual_credit", {}),
+            "prorl_cfg": self.config.get("system", {}).get("prorl", {}),
+        }
 
-        # v13.2: AFlow dynamic chain generator
-        aflow_model = self.config.get("system", {}).get("model_router", {}).get(
-            "intent", "meta-llama/llama-3.3-70b-instruct:free"
-        )
-        self._aflow = AFlowEngine(
-            model=aflow_model,
-            default_chains=self.default_chains,
-        )
+    def _get_lats(self) -> "LATSEngine":
+        if self._lats_engine is None:
+            self._lats_engine = LATSEngine(model=self._lazy_config["lats_model"])
+        return self._lats_engine
 
-        # v14.0: SAGE self-evolution engine
-        sage_cfg = self.config.get("system", {}).get("sage", {})
-        self._sage = SAGEEngine(
-            model=aflow_model,
-            enabled=sage_cfg.get("enabled", True),
-        )
+    def _get_march(self):
+        if self._march_protocol is None:
+            self._march_protocol = _get_shared_march()
+        return self._march_protocol
 
-        # v14.0: MAC Dynamic Constitution
-        mac_cfg = self.config.get("system", {}).get("mac", {})
-        self._mac = MACConstitution(
-            model=self.config.get("system", {}).get("model_router", {}).get(
-                "expand", "google/gemma-3-12b-it:free"
-            ),
-            enabled=mac_cfg.get("enabled", True),
-        )
+    def _get_aflow(self) -> "AFlowEngine":
+        if self._aflow is None:
+            self._aflow = AFlowEngine(
+                model=self._lazy_config["aflow_model"],
+                default_chains=self.default_chains,
+            )
+        return self._aflow
 
-        # v14.1: Counterfactual Credit for Ensemble Voting attribution
-        cc_cfg = self.config.get("system", {}).get("counterfactual_credit", {})
-        self._counterfactual = CounterfactualCredit(
-            enabled=cc_cfg.get("enabled", True),
-        )
+    def _get_sage(self) -> "SAGEEngine":
+        if self._sage is None:
+            cfg = self._lazy_config["sage_cfg"]
+            self._sage = SAGEEngine(
+                model=self._lazy_config["aflow_model"],
+                enabled=cfg.get("enabled", True),
+            )
+        return self._sage
 
-        # v14.1: ProRL lightweight rollout evaluation
-        prorl_cfg = self.config.get("system", {}).get("prorl", {})
-        self._prorl = ProRLEngine(
-            enabled=prorl_cfg.get("enabled", True),
-        )
+    def _get_mac(self) -> "MACConstitution":
+        if self._mac is None:
+            cfg = self._lazy_config["mac_cfg"]
+            self._mac = MACConstitution(
+                model=self._lazy_config["mac_model"],
+                enabled=cfg.get("enabled", True),
+            )
+        return self._mac
+
+    def _get_counterfactual(self) -> "CounterfactualCredit":
+        if self._counterfactual is None:
+            cfg = self._lazy_config["cc_cfg"]
+            self._counterfactual = CounterfactualCredit(enabled=cfg.get("enabled", True))
+        return self._counterfactual
+
+    def _get_prorl(self) -> "ProRLEngine":
+        if self._prorl is None:
+            cfg = self._lazy_config["prorl_cfg"]
+            self._prorl = ProRLEngine(enabled=cfg.get("enabled", True))
+        return self._prorl
 
     def _init_supermemory(self) -> None:
         init_supermemory(self)
@@ -356,7 +378,7 @@ class PipelineExecutor:
             return await route_llm(
                 prompt,
                 system="You are a debugging assistant. Be concise. Answer in Russian.",
-                model="meta-llama/llama-3.3-70b-instruct:free",
+                model="qwen/qwen3.6-plus:free",
                 max_tokens=512,
                 temperature=0.3,
             )
@@ -399,8 +421,13 @@ class PipelineExecutor:
     ) -> tuple[List[str], str]:
         """v13.2 AFlow: generate optimal chain for this prompt.
 
-        Returns (chain, source) where source is "heuristic"|"llm"|"lats"|"fallback".
+        Returns (chain, source) where source is "heuristic"|"llm"|"lats"|"fallback"|"standard".
         Falls back to static get_chain() on any error.
+
+        v17.2: 3-level routing — skip AFlow/ProRL for simple tasks.
+          - simple  → 3-role chain [Planner, Executor, Auditor]  ("standard")
+          - complex → AFlow + ProRL
+          - extreme → AFlow + ProRL
         """
         # Если в конфиге явно задан pipeline — уважаем его (не override)
         brigade_config = self.config.get("brigades", {}).get(brigade, {})
@@ -411,8 +438,19 @@ class PipelineExecutor:
         if not available_roles:
             return self.get_chain(brigade)[:max_steps], "fallback"
 
+        # v17.2: Standard 3-role shortcut for simple tasks — saves ~4 LLM calls
+        _complexity = classify_complexity(prompt)
+        if _complexity == "simple":
+            _standard_chain: list[str] = []
+            for r in ("Planner", "Coder", "Executor_Tools", "Auditor"):
+                if r in available_roles:
+                    _standard_chain.append(r)
+            if len(_standard_chain) >= 2:
+                logger.info("v17.2 standard-path: simple task → 3-role chain", chain=_standard_chain)
+                return _standard_chain[:max_steps], "standard"
+
         try:
-            aflow_result = await self._aflow.generate_chain(
+            aflow_result = await self._get_aflow().generate_chain(
                 prompt=prompt,
                 brigade=brigade,
                 available_roles=available_roles,
@@ -422,26 +460,27 @@ class PipelineExecutor:
             chain = aflow_result.chain or self.get_chain(brigade)
 
             # v14.1: ProRL — evaluate AFlow chain vs static fallback
+            # v17.2: only run ProRL for chains with 3+ steps (gating)
             static_chain = self.get_chain(brigade)[:max_steps]
-            _complexity = classify_complexity(prompt)
-            try:
-                prorl_result = self._prorl.evaluate_candidates(
-                    candidates=[
-                        (chain[:max_steps], aflow_result.source),
-                        (static_chain, "static"),
-                    ],
-                    complexity=_complexity,
-                )
-                chain = prorl_result.selected_chain
-                source = prorl_result.selected_source
-                logger.info(
-                    "ProRL: chain selected",
-                    chain=chain, source=source,
-                    score=prorl_result.best_score,
-                )
-                return chain, source
-            except Exception as _prorl_err:
-                logger.debug("ProRL evaluation failed (non-fatal)", error=str(_prorl_err))
+            if len(chain) >= 3:
+                try:
+                    prorl_result = self._get_prorl().evaluate_candidates(
+                        candidates=[
+                            (chain[:max_steps], aflow_result.source),
+                            (static_chain, "static"),
+                        ],
+                        complexity=_complexity,
+                    )
+                    chain = prorl_result.selected_chain
+                    source = prorl_result.selected_source
+                    logger.info(
+                        "ProRL: chain selected",
+                        chain=chain, source=source,
+                        score=prorl_result.best_score,
+                    )
+                    return chain, source
+                except Exception as _prorl_err:
+                    logger.debug("ProRL evaluation failed (non-fatal)", error=str(_prorl_err))
 
             logger.info(
                 "AFlow chain generated",
@@ -457,13 +496,14 @@ class PipelineExecutor:
     async def execute(
         self,
         prompt: str,
-        brigade: str = "Dmarket",
+        brigade: str = "Dmarket-Dev",
         max_steps: int = 5,
         status_callback=None,
         task_type: Optional[str] = None,
-        shared_observations: dict = None
+        shared_observations: Optional[dict] = None
     ) -> Dict[str, Any]:
         """Execute the full pipeline for a brigade."""
+        _pipeline_start_ts = time.time()
 
         # --- v14.4: Multi-Task Decomposer (P1-1 / P1-3 hotfix) ---
         # If the prompt contains a numbered list (1. ... 2. ...) and is long enough,
@@ -535,8 +575,8 @@ class PipelineExecutor:
             try:
                 lats_model = self.config.get("brigades", {}).get(brigade, {}).get(
                     "roles", {}
-                ).get("Planner", {}).get("model", "meta-llama/llama-3.3-70b-instruct:free")
-                lats_result = await self._lats_engine.search(
+                ).get("Planner", {}).get("model", "qwen/qwen3.6-plus:free")
+                lats_result = await self._get_lats().search(
                     prompt=prompt, model=lats_model, config=self.config,
                 )
                 if lats_result.best_answer:
@@ -640,7 +680,7 @@ class PipelineExecutor:
             try:
                 from src.mcp_tools.memory_search import export_vault_content
                 _mega_source = export_vault_content()
-                if _mega_source and "No markdown files" not in _mega_source:
+                if _mega_source and "No markdown files" not in _mega_source and "not found" not in _mega_source:
                     memory_context = (_mega_source + "\n\n" + memory_context) if memory_context else _mega_source
                     logger.info("NotebookLM Deep Source Injection applied (Complexity: extreme)")
             except Exception as _deep_err:
@@ -669,6 +709,28 @@ class PipelineExecutor:
         steps_results = []
         context_briefing = memory_context
         step_index = 0
+
+        # v17.2: Pre-compute enrichment strings once (not per-step)
+        _mac_enrichment = ""
+        try:
+            _mac = self._get_mac()
+            _mac_enrichment = _mac.get_enrichment_text() if hasattr(_mac, 'get_enrichment_text') else ""
+        except Exception as _e:
+            logger.debug("MAC enrichment failed (non-fatal)", error=str(_e))
+
+        _obsidian_logic_cache: str = ""
+        try:
+            from src.pipeline._logic_provider import get_brigade_logic
+            _obsidian_logic_cache = get_brigade_logic(brigade) or ""
+        except Exception as _e:
+            logger.debug("Obsidian logic load failed (non-fatal)", error=str(_e))
+
+        _learning_log_cache: str = ""
+        try:
+            from src.pipeline._logic_provider import check_learning_log
+            _learning_log_cache = check_learning_log(prompt) or ""
+        except Exception as _e:
+            logger.debug("Learning log check failed (non-fatal)", error=str(_e))
 
         for group in chain_groups:
             is_parallel = len(group) > 1
@@ -700,7 +762,7 @@ class PipelineExecutor:
 
             role_name = group[0]
             if task_type:
-                model = self.config.get("system", {}).get("model_router", {}).get(task_type, "meta-llama/llama-3.3-70b-instruct:free")
+                model = self.config.get("system", {}).get("model_router", {}).get(task_type, "qwen/qwen3.6-plus:free")
                 role_config = {"model": model}
                 system_prompt = build_role_prompt(role_name, role_config, self._framework_root, task_type=task_type)
             else:
@@ -710,34 +772,18 @@ class PipelineExecutor:
                 if not role_config:
                     logger.warning(f"Role '{role_name}' not found in config, skipping")
                     continue
-                model = role_config.get("model", "meta-llama/llama-3.3-70b-instruct:free")
+                model = role_config.get("model", "qwen/qwen3.6-plus:free")
                 system_prompt = build_role_prompt(role_name, role_config, self._framework_root)
 
             is_final_step = (step_index == len(chain) - 1)
 
-            # v14.0: MAC — дополняем system_prompt динамическими правилами проекта
-            try:
-                system_prompt = self._mac.enrich_system_prompt(system_prompt)
-            except Exception as _mac_err:
-                logger.debug("MAC enrichment failed (non-fatal)", error=str(_mac_err))
-
-            # v16.0: Obsidian Brigade Logic override
-            try:
-                from src.pipeline._logic_provider import get_brigade_logic
-                _obsidian_logic = get_brigade_logic(brigade)
-                if _obsidian_logic:
-                    system_prompt += _obsidian_logic
-            except Exception as _obs_err:
-                logger.debug("Obsidian logic provider failed (non-fatal)", error=str(_obs_err))
-
-            # v16.1: Recursive Self-Reflection (Learning Log Check)
-            try:
-                from src.pipeline._logic_provider import check_learning_log
-                _reflection = check_learning_log(prompt)
-                if _reflection:
-                    system_prompt += _reflection
-            except Exception as _refl_err:
-                logger.debug("Recursive self-reflection failed", error=str(_refl_err))
+            # v17.2: Use pre-computed enrichment (was per-step, now pipeline-level)
+            if _mac_enrichment:
+                system_prompt += _mac_enrichment
+            if _obsidian_logic_cache:
+                system_prompt += _obsidian_logic_cache
+            if _learning_log_cache:
+                system_prompt += _learning_log_cache
 
             # П4-fix v14.8 → усилено в v14.9: антигаллюцинационная директива для YouTube
             if _yt_transcript_injected and role_name in ("Researcher", "Analyst", "Summarizer"):
@@ -792,15 +838,15 @@ class PipelineExecutor:
 
             async with self._vram_protection(model, prev_model):
                 preserve_think = any(role in role_name for role in ["Planner", "Foreman", "Orchestrator", "Auditor"])
-                active_mcp = self.openclaw_mcp if brigade == "OpenClaw" else self.dmarket_mcp
+                active_mcp = self.openclaw_mcp if brigade == "OpenClaw-Core" else self.dmarket_mcp
                 role_schema = ROLE_SCHEMAS.get(role_name) if not task_type else None
 
-                # v13.2: Ensemble Voting для Executor ролей (только сложные задачи)
+                # v13.2→v17.2: Ensemble Voting only for extreme complexity (saves 1 LLM call on complex tasks)
                 _ensemble_cfg = self.config.get("system", {}).get("ensemble_voting", {})
                 _ensemble_enabled = _ensemble_cfg.get("enabled", True)
                 _is_executor = role_name.startswith("Executor_") or role_name in ("Coder",)
-                _is_complex = classify_complexity(prompt) in ("complex", "extreme")
-                _use_ensemble = _ensemble_enabled and _is_executor and _is_complex and not task_type
+                _is_extreme = classify_complexity(prompt) == "extreme"
+                _use_ensemble = _ensemble_enabled and _is_executor and _is_extreme and not task_type
 
                 if _use_ensemble:
                     _auditor_cfg = (
@@ -850,16 +896,16 @@ class PipelineExecutor:
                             )
                             if shared_observations is not None:
                                 for call, tc_res in zip(_parsed_calls, _tc_results):
-                                    shared_observations[call.name] = (tc_res.output or tc_res.error or "")[:2000]
+                                    shared_observations[call.name] = (tc_res.get("output") or tc_res.get("error") or "")[:2000]
                             _observation = format_observations(_tc_results)
 
                             # --- v16.4: Autonomous Error Catcher + Self-Healing ---
                             try:
                                 from src.pipeline._logic_provider import is_tool_error, autonomous_reflection
                                 _tool_errors = [
-                                    (c.name, r.output or r.error or "")
+                                    (c.name, r.get("output") or r.get("error") or "")
                                     for c, r in zip(_parsed_calls, _tc_results)
-                                    if is_tool_error(r.output or r.error or "")
+                                    if is_tool_error(r.get("output") or r.get("error") or "")
                                 ]
                                 if _tool_errors and not _autoheal_used:
                                     _autoheal_used = True
@@ -919,7 +965,7 @@ class PipelineExecutor:
                 if guardrail_fn and not task_type:
                     # B3-fix: передаём task_hint для context-aware валидации (Analyst)
                     _guardrail_kwargs: Dict[str, Any] = {}
-                    if role_name == "Analyst" and _yt_transcript_injected:
+                    if role_name == "Analyst" and (_yt_transcript_injected or _yt_metadata_only):
                         _guardrail_kwargs["task_hint"] = "youtube video"
                     for retry_i in range(GUARDRAIL_MAX_RETRIES):
                         is_valid, feedback = guardrail_fn(response, **_guardrail_kwargs)
@@ -960,7 +1006,7 @@ class PipelineExecutor:
                         (response and response.startswith("⚠️"))
                         or "traceback" in _resp_lower
                         or "exception:" in _resp_lower
-                        or "error:" in _resp_lower
+                        or re.search(r"^(exception|error):", _resp_lower, re.MULTILINE)
                         or "failed to execute" in _resp_lower
                     )
                     if _has_error_markers:
@@ -1110,19 +1156,8 @@ class PipelineExecutor:
                     f"✅ Шаг {step_index + 1}/{len(chain)} ({role_name}) завершён. Передаю контекст дальше..."
                 )
 
-            # Git auto-commit moved to background thread to avoid blocking the event loop
-            try:
-                import subprocess
-                commit_msg = f"Auto-commit [PoW]: Pipeline step {role_name} ({model}) completed"
-                await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "commit", "-am", commit_msg],
-                    cwd=os.path.dirname(__file__),
-                    capture_output=True,
-                    timeout=10,
-                )
-            except Exception as e:
-                logger.debug(f"Git auto-commit failed: {e}")
+            # v17.3: Auto git commit removed — destructive side-effect that could
+            # commit secrets or unrelated changes. Use explicit commits instead.
 
             context_briefing = compress_for_next_step(role_name, response)
 
@@ -1176,7 +1211,7 @@ class PipelineExecutor:
                     if not executor_resp:
                         executor_resp = steps_results[-2]["response"] if len(steps_results) >= 2 else ""
                     archivist_resp = final_response
-                    march_result = await self._march_protocol.cross_verify_agents(
+                    march_result = await self._get_march().cross_verify_agents(
                         executor_response=executor_resp,
                         archivist_response=archivist_resp,
                         memory=self._supermemory,
@@ -1205,7 +1240,7 @@ class PipelineExecutor:
         # v14.0: SAGE — анализ низкокачественных шагов
         if steps_results:
             try:
-                sage_result = self._sage.analyze_steps(steps_results, chain)
+                sage_result = self._get_sage().analyze_steps(steps_results, chain)
                 if sage_result.needs_rebuild:
                     logger.warning(
                         "SAGE: low-quality step detected — correction saved",
@@ -1214,7 +1249,7 @@ class PipelineExecutor:
                         suggested_chain=sage_result.suggested_chain,
                     )
                     if self._supermemory:
-                        self._sage.save_to_memory(self._supermemory, sage_result)
+                        self._get_sage().save_to_memory(self._supermemory, sage_result)
             except Exception as _sage_err:
                 logger.debug("SAGE analysis failed (non-fatal)", error=str(_sage_err))
 
@@ -1235,7 +1270,7 @@ class PipelineExecutor:
         # v14.1: Counterfactual Credit — persist stats to SuperMemory
         if self._supermemory:
             try:
-                self._counterfactual.save_to_memory(self._supermemory)
+                self._get_counterfactual().save_to_memory(self._supermemory)
             except Exception as _cc_err:
                 logger.debug("Counterfactual credit save failed (non-fatal)", error=str(_cc_err))
 
@@ -1251,6 +1286,47 @@ class PipelineExecutor:
             logger.debug("Obsidian LearningLog / AutoTag write failed", error=str(_ll_err))
 
         logger.info(f"Pipeline COMPLETE: brigade={brigade}, steps={len(steps_results)}")
+
+        # v18.0: CognitiveEvolution — record execution outcome
+        if hasattr(self, 'evolution_engine') and self.evolution_engine:
+            try:
+                from src.cognitive_evolution import ExecutionOutcome
+                _evo_last_role = steps_results[-1]["role"] if steps_results else "unknown"
+                _evo_last_model = steps_results[-1].get("model", "unknown") if steps_results else "unknown"
+                _evo_duration = time.time() - _pipeline_start_ts
+                self.evolution_engine.record_outcome(ExecutionOutcome(
+                    task_id=f"pipe_{int(_pipeline_start_ts)}",
+                    task_description=prompt[:200],
+                    role=_evo_last_role,
+                    intended_action=prompt[:100],
+                    observed_result=final_response[:200] if final_response else "",
+                    success=bool(_is_success),
+                    quality_score=0.8 if _is_success else 0.3,
+                    duration_sec=_evo_duration,
+                    model_used=_evo_last_model,
+                ))
+            except Exception as _evo_err:
+                logger.debug("CognitiveEvolution record failed (non-fatal)", error=str(_evo_err))
+
+        # v18.0: RL Orchestrator — record pipeline episode for reward learning
+        if hasattr(self, 'rl_orchestrator') and self.rl_orchestrator:
+            try:
+                _rl_duration = time.time() - _pipeline_start_ts
+                self.rl_orchestrator.on_pipeline_complete(
+                    episode_id=f"ep_{int(_pipeline_start_ts)}",
+                    task_type=task_type or "general",
+                    success=bool(_is_success),
+                    auditor_score=0.8 if _is_success else 0.3,
+                    latency_ms=_rl_duration * 1000,
+                    input_tokens=len(prompt) // 4,
+                    output_tokens=sum(len(s.get("response", "")) // 4 for s in steps_results),
+                    steps=[
+                        {"role": s.get("role", ""), "model": s.get("model", ""), "response": s.get("response", "")[:2000]}
+                        for s in steps_results
+                    ],
+                )
+            except Exception as _rl_err:
+                logger.debug("RL on_pipeline_complete failed (non-fatal)", error=str(_rl_err))
 
         try:
             validated = PipelineResult(
@@ -1276,7 +1352,7 @@ class PipelineExecutor:
         role_config = self.config.get("brigades", {}).get(brigade, {}).get("roles", {}).get(role_name, {})
         if not role_config:
             return f"⚠️ Role '{role_name}' not found in config."
-        model = role_config.get("model", "meta-llama/llama-3.3-70b-instruct:free")
+        model = role_config.get("model", "qwen/qwen3.6-plus:free")
         display_model = self._display_model(role_config, model)
         system_prompt = build_role_prompt(role_name, role_config, self._framework_root)
         step_prompt = (
@@ -1286,7 +1362,7 @@ class PipelineExecutor:
         )
         if status_callback:
             await status_callback(role_name, display_model, f"⚡ Параллельно: {role_name} работает...")
-        active_mcp = self.openclaw_mcp if brigade == "OpenClaw" else self.dmarket_mcp
+        active_mcp = self.openclaw_mcp if brigade == "OpenClaw-Core" else self.dmarket_mcp
         return await self._call_llm(model, system_prompt, step_prompt, role_name, role_config, active_mcp)
 
     def _display_model(self, role_config: Dict[str, Any], fallback_model: str = "") -> str:
@@ -1339,7 +1415,6 @@ class PipelineExecutor:
                 return ""
 
         # Launch all instances concurrently
-        tasks = [_run_at_temp(t) for t in temperatures]
         candidates: List[str] = []
         try:
             async with asyncio.TaskGroup() as tg:
@@ -1347,8 +1422,8 @@ class PipelineExecutor:
             candidates = [f.result() for f in futures if f.result()]
         except* Exception as eg:
             logger.warning("Ensemble TaskGroup error", errors=str(eg))
-            # Graceful fallback via gather
-            raw = await asyncio.gather(*tasks, return_exceptions=True)
+            # Graceful fallback via gather (create fresh coroutines)
+            raw = await asyncio.gather(*[_run_at_temp(t) for t in temperatures], return_exceptions=True)
             candidates = [r for r in raw if isinstance(r, str) and r]
 
         if not candidates:
@@ -1399,7 +1474,7 @@ class PipelineExecutor:
                     logger.info("Ensemble: Auditor selected winner", idx=idx + 1)
                     # v14.1: Counterfactual Credit — record vote outcome
                     try:
-                        self._counterfactual.record_vote(
+                        self._get_counterfactual().record_vote(
                             role=role_name, temperatures=temperatures,
                             candidates=candidates, winner_index=idx,
                         )
@@ -1411,7 +1486,7 @@ class PipelineExecutor:
                 logger.info("Ensemble: Auditor synthesised composite answer")
                 # v14.1: Counterfactual Credit — composite = first candidate wins by default
                 try:
-                    self._counterfactual.record_vote(
+                    self._get_counterfactual().record_vote(
                         role=role_name, temperatures=temperatures,
                         candidates=candidates, winner_index=0,
                     )
@@ -1524,11 +1599,13 @@ class PipelineExecutor:
                 )
             # Prepend chat history to each sub-task
             enriched_text = _history_block + text if _history_block else text
+            # task_type prevents re-decomposition (infinite recursion guard)
             return await self.execute(
                 prompt=enriched_text,
                 brigade=brigade,
                 max_steps=max_steps,
                 status_callback=status_callback,
+                task_type="decomposed_subtask",
                 shared_observations=shared_observations,
             )
 
@@ -1570,9 +1647,21 @@ class PipelineExecutor:
     async def _force_unload(self, model: str):
         pass  # No-op in cloud-only mode
 
-    async def execute_stream(self, prompt, brigade="Dmarket", max_steps=5, status_callback=None, task_type=None):
-        # Streaming delegates to regular execute in cloud-only mode
-        return await self.execute(prompt, brigade=brigade, max_steps=max_steps, status_callback=status_callback, task_type=task_type)
+    async def execute_stream(self, prompt, brigade="Dmarket-Dev", max_steps=5, status_callback=None, task_type=None):
+        """Execute pipeline with streaming enabled for the final response."""
+        result = await self.execute(prompt, brigade=brigade, max_steps=max_steps, status_callback=status_callback, task_type=task_type)
+
+        # If execution succeeded, attach a stream generator for progressive Telegram delivery
+        if result.get("status") != "error" and result.get("final_response"):
+            async def _stream_final():
+                """Yield the final response in chunks for progressive display."""
+                text = result["final_response"]
+                chunk_size = 120
+                for i in range(0, len(text), chunk_size):
+                    yield text[i:i + chunk_size]
+            result["stream"] = _stream_final()
+
+        return result
 
     @asynccontextmanager
     async def _vram_protection(self, target_model: str, prev_model: Optional[str]):

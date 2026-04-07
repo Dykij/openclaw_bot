@@ -22,8 +22,8 @@ async def cmd_tailscale(gateway, message: Message):
     await message.reply(msg, parse_mode="HTML")
 
 
-async def cmd_test(gateway, message: Message):
-    if message.from_user.id != gateway.admin_id:
+async def cmd_test(gateway, message: Message, from_callback: bool = False):
+    if message.from_user.id != gateway.admin_id and not from_callback:
         return
 
     await message.reply(
@@ -98,9 +98,9 @@ async def cmd_test_all_models(gateway, message: Message):
     )
 
 
-async def cmd_history(gateway, message: Message):
+async def cmd_history(gateway, message: Message, from_callback: bool = False):
     """Show recent pipeline execution history."""
-    if message.from_user.id != gateway.admin_id:
+    if message.from_user.id != gateway.admin_id and not from_callback:
         return
 
     history = getattr(gateway, '_pipeline_history', [])
@@ -130,9 +130,9 @@ async def cmd_history(gateway, message: Message):
         await message.reply(msg.replace("*", "").replace("`", ""))
 
 
-async def cmd_perf(gateway, message: Message):
+async def cmd_perf(gateway, message: Message, from_callback: bool = False):
     """Show inference performance metrics."""
-    if message.from_user.id != gateway.admin_id:
+    if message.from_user.id != gateway.admin_id and not from_callback:
         return
 
     metrics = getattr(gateway, '_perf_metrics', [])
@@ -211,7 +211,7 @@ async def cmd_diag(gateway, message: Message):
     lines: list[str] = ["<b>🔍 OpenClaw Diagnostics Report</b>\n"]
 
     # --- MCP Servers ---
-    mcp = getattr(gateway.pipeline, 'mcp_client', None)
+    mcp = getattr(gateway.pipeline, 'openclaw_mcp', None)
     if mcp:
         sessions = getattr(mcp, '_server_sessions', [])
         tools = getattr(mcp, 'available_tools_openai', [])

@@ -82,7 +82,7 @@ _start_time = time.monotonic()
 
 def create_brigade_app(config: dict[str, Any]) -> FastAPI:
     """Create the FastAPI application with the given config and executor."""
-    from src.pipeline_executor import PipelineExecutor
+    from src.pipeline._core import PipelineExecutor
 
     executor = PipelineExecutor(config)
 

@@ -37,12 +37,12 @@ The 798-line command monolith is replaced by a 23-line facade. The existing `src
 
 Updated `config/openclaw_config.json` model_router for elite free-tier performance:
 
-| Task      | Before                                   | After                              |
-| --------- | ---------------------------------------- | ---------------------------------- |
-| code      | `meta-llama/llama-3.3-70b-instruct:free` | `qwen/qwen-2.5-coder-32b-instruct` |
-| reasoning | `deepseek/deepseek-r1:free`              | _(unchanged)_                      |
-| general   | `meta-llama/llama-3.3-70b-instruct:free` | _(unchanged)_                      |
-| vision    | `meta-llama/llama-4-maverick:free`       | _(unchanged)_                      |
+| Task      | Before                             | After                              |
+| --------- | ---------------------------------- | ---------------------------------- |
+| code      | `qwen/qwen3.6-plus:free`           | `qwen/qwen-2.5-coder-32b-instruct` |
+| reasoning | `deepseek/deepseek-r1:free`        | _(unchanged)_                      |
+| general   | `qwen/qwen3.6-plus:free`           | _(unchanged)_                      |
+| vision    | `meta-llama/llama-4-maverick:free` | _(unchanged)_                      |
 
 **Why Qwen-2.5-Coder-32B?** Benchmarks show it outperforms Llama-3.3-70B on HumanEval (92.7 vs 88.4) and MBPP+ while using significantly fewer parameters. For code-specific routing, a specialized 32B coder beats a generalist 70B.
 

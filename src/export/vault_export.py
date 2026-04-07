@@ -2,7 +2,7 @@
 
 import os
 
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def export_vault_content() -> str:

@@ -14,6 +14,7 @@ from src.bot_commands.diagnostics import (
 )
 from src.bot_commands.agents_cmd import cmd_agents, cmd_agent
 from src.bot_commands.callbacks import handle_callback_query, handle_unknown_command
+from src.bot_commands.training import cmd_train, cmd_rl_status
 
 __all__ = [
     "cmd_start",
@@ -36,4 +37,6 @@ __all__ = [
     "cmd_agent",
     "handle_callback_query",
     "handle_unknown_command",
+    "cmd_train",
+    "cmd_rl_status",
 ]

@@ -64,7 +64,8 @@ except ImportError:
     # MCP server is launched as a subprocess; src/ may not be on sys.path
     import importlib.util as _ilu
     import pathlib as _pl
-    _cache_path = _pl.Path(__file__).parent / "utils" / "cache.py"
+    # __file__ = src/mcp_tools/websearch.py → parent.parent = src/ → src/utils/cache.py
+    _cache_path = _pl.Path(__file__).parent.parent / "utils" / "cache.py"
     _spec = _ilu.spec_from_file_location("src.utils.cache", _cache_path)
     _mod = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
     _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
@@ -376,7 +377,12 @@ def _sync_news(
 
 
 def _sync_answers(query: str) -> list[dict[str, Any]]:
-    """Get DuckDuckGo instant answers synchronously with retry + caching."""
+    """Get DuckDuckGo instant answers synchronously with retry + caching.
+
+    Older duckduckgo_search versions had ``ddgs.answers()``; newer ones removed
+    it.  We fall back to a regular ``text()`` search limited to 1 result so the
+    tool always returns *something*.
+    """
     ck = _cache_key("answers", q=query)
     cached = _search_cache.get(ck)
     if cached is not None:
@@ -384,7 +390,10 @@ def _sync_answers(query: str) -> list[dict[str, Any]]:
 
     def _do() -> list[dict[str, Any]]:
         with DDGS() as ddgs:
-            return list(ddgs.answers(query))
+            if hasattr(ddgs, "answers"):
+                return list(ddgs.answers(query))
+            # Fallback: use text search limited to 1 result
+            return list(ddgs.text(query, max_results=1))
 
     results = _with_retry(_do)
     _search_cache.put(ck, results)
@@ -398,7 +407,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if not url:
             return [TextContent(type="text", text="[web_fetch error] No URL provided.")]
         max_chars = int(arguments.get("max_chars", _WEB_FETCH_MAX_CHARS))
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         content = await loop.run_in_executor(None, _sync_fetch, url, max_chars)
         return [TextContent(type="text", text=content)]
 
@@ -408,7 +417,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         region = arguments.get("region", "wt-wt")
         timelimit = arguments.get("timelimit")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             None, _sync_search, query, max_results, region, timelimit,
         )
@@ -432,7 +441,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         max_results = arguments.get("max_results", 5)
         timelimit = arguments.get("timelimit")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             None, _sync_news, query, max_results, timelimit,
         )
@@ -452,7 +461,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     if name == "web_search_answers":
         query = arguments["query"]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(None, _sync_answers, query)
 
         if not results:

@@ -15,6 +15,8 @@ import {
 
 export type ResetScope = "config" | "config+creds+sessions" | "full";
 
+const VALID_RESET_SCOPES: readonly ResetScope[] = ["config", "config+creds+sessions", "full"];
+
 export type ResetOptions = {
   scope?: ResetScope;
   yes?: boolean;
@@ -92,7 +94,7 @@ export async function resetCommand(runtime: RuntimeEnv, opts: ResetOptions) {
     scope = selection;
   }
 
-  if (!["config", "config+creds+sessions", "full"].includes(scope)) {
+  if (!(VALID_RESET_SCOPES as readonly string[]).includes(scope)) {
     runtime.error('Invalid --scope. Expected "config", "config+creds+sessions", or "full".');
     runtime.exit(1);
     return;
