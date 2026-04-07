@@ -369,6 +369,3 @@ if __name__ == "__main__":
         print(f"  Skill notes: {result['skill_notes']}")
         print(f"  Learning logs: {result['learning_logs']}")
         print(f"  Total vault notes: {result['vault_notes_total']}")
-    print(f"  Skill notes: {result['skill_notes']}")
-    print(f"  Learning logs: {result['learning_logs']}")
-    print(f"  Total vault notes: {result['vault_notes_total']}")

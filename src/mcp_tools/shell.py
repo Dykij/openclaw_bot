@@ -98,10 +98,22 @@ def run_command(command: str, workdir: str = "", timeout: int = 30) -> str:
     env = os.environ.copy()
 
     try:
-        proc = asyncio.get_event_loop().run_until_complete(
-            _exec_async(args, cwd, env, capped_timeout)
-        )
-        return proc
+        # Check if there's already a running event loop
+        try:
+            asyncio.get_running_loop()
+            _has_loop = True
+        except RuntimeError:
+            _has_loop = False
+
+        if not _has_loop:
+            # No running loop — safe to use run_until_complete
+            proc = asyncio.new_event_loop().run_until_complete(
+                _exec_async(args, cwd, env, capped_timeout)
+            )
+            return proc
+        else:
+            # Running loop exists — fall through to sync subprocess
+            raise RuntimeError("use sync fallback")
     except RuntimeError:
         # If no event loop is running (called from sync context by FastMCP)
         import subprocess
@@ -131,7 +143,7 @@ async def _exec_async(args: list[str], cwd: str, env: dict, timeout: int) -> str
     import subprocess
     try:
         result = await asyncio.wait_for(
-            asyncio.get_event_loop().run_in_executor(
+            asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: subprocess.run(
                     args,

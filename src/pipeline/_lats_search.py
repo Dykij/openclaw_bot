@@ -145,7 +145,7 @@ class LATSEngine:
         if model:
             self._evaluate_model = model
         if config:
-            router_cfg = config.get("model_router", {})
+            router_cfg = config.get("system", {}).get("model_router", {})
             self._expand_model = router_cfg.get(
                 "expand", "qwen/qwen3.6-plus:free",
             )

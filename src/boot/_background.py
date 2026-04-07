@@ -45,7 +45,7 @@ async def poll_remote_tasks(gateway):
         logger.info("Polling Gateway: Disabled (no URL in config)")
         return
 
-    interval = gateway.config["system"].get("polling_interval_sec", 30)
+    interval = gateway.config["system"].get("polling_interval", 30)
     logger.info("Polling Gateway: Active", url=poll_url, interval=interval)
 
     from src.clawhub.client import ClawHubClient

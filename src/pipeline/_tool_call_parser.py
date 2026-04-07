@@ -91,8 +91,9 @@ _RE_QWEN_FUNCTION = re.compile(
 )
 
 # Catch-all: raw JSON with "name" and "arguments" keys not inside a code block
+# Supports one level of nested braces in arguments (e.g. {"options": {"lang": "en"}})
 _RE_RAW_JSON_TOOL = re.compile(
-    r'(?<![`])\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}(?![`])',
+    r'(?<![`])\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})\s*\}(?![`])',
     re.DOTALL,
 )
 
@@ -105,9 +106,11 @@ def _safe_parse_json(text: str) -> Optional[Dict]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Try fixing common model errors: trailing commas, single quotes
+        # Try fixing common model errors: trailing commas, single quotes as delimiters
         fixed = re.sub(r",\s*([}\]])", r"\1", text)
-        fixed = fixed.replace("'", '"')
+        # Replace single quotes used as JSON delimiters, but not inside string values
+        # Match 'key': 'value' patterns where ' is used instead of "
+        fixed = re.sub(r"(?<=[\[{,:\s])'|'(?=[\]},:}\s])", '"', fixed)
         try:
             return json.loads(fixed)
         except json.JSONDecodeError:
@@ -236,6 +239,15 @@ def parse_tool_calls(text: str) -> List[ParsedToolCall]:
         results.append(ParsedToolCall(name=fn_name, arguments=args, raw_match=m.group(0)))
         seen_ranges.append((m.start(), m.end()))
 
+    # 10. Catch-all: raw JSON {"name": "...", "arguments": {...}} not inside code blocks
+    for m in _RE_RAW_JSON_TOOL.finditer(text):
+        if _overlaps(m.start(), m.end()):
+            continue
+        fn_name = m.group(1)
+        args = _safe_parse_json(m.group(2)) or {}
+        results.append(ParsedToolCall(name=fn_name, arguments=args, raw_match=m.group(0)))
+        seen_ranges.append((m.start(), m.end()))
+
     return results
 
 
@@ -258,9 +270,9 @@ async def execute_parsed_tool_calls(
     mcp_client: Any,
     sandbox: Any = None,
 ) -> List[Dict[str, Any]]:
-    """Execute parsed tool calls via MCP or sandbox. Returns list of results."""
-    results = []
-    for call in calls:
+    """Execute parsed tool calls via MCP or sandbox. Parallel where safe."""
+
+    async def _exec_one(call: ParsedToolCall) -> Dict[str, Any]:
         try:
             if call.name == "sandbox_execute" and sandbox:
                 payload = call.arguments
@@ -268,48 +280,50 @@ async def execute_parsed_tool_calls(
                     code=payload.get("code", ""),
                     language=payload.get("language", "python"),
                 )
-                results.append({
+                return {
                     "tool": call.name,
                     "success": sb_result.success,
-                    "output": f"exit={sb_result.exit_code} stdout={sb_result.stdout[:1500]}",
-                })
+                    "output": f"exit={sb_result.exit_code} stdout={(sb_result.stdout or '')[:1500]}",
+                }
             elif call.name == "analyze_youtube_video":
                 from src.tools.youtube_parser import analyze_youtube_video
                 url_or_id = call.arguments.get("url", call.arguments.get("query", ""))
                 yt_result = await analyze_youtube_video(url_or_id)
-                results.append({
+                return {
                     "tool": call.name,
                     "success": yt_result.success,
                     "output": yt_result.to_context()[:2000],
-                })
+                }
             elif call.name == "sandbox_list_skills" and sandbox:
                 skills_list = sandbox.skill_library.list_skills()
-                results.append({
+                return {
                     "tool": call.name,
                     "success": True,
                     "output": str(skills_list)[:2000],
-                })
+                }
             elif mcp_client and hasattr(mcp_client, "call_tool"):
                 tool_output = await mcp_client.call_tool(call.name, call.arguments)
-                results.append({
+                return {
                     "tool": call.name,
                     "success": True,
                     "output": str(tool_output)[:2000],
-                })
+                }
             else:
-                results.append({
+                return {
                     "tool": call.name,
                     "success": False,
                     "output": f"No handler available for tool: {call.name}",
-                })
+                }
         except Exception as e:
             logger.error("Tool execution failed", tool=call.name, error=str(e))
-            results.append({
+            return {
                 "tool": call.name,
                 "success": False,
                 "output": f"Error: {e}",
-            })
-    return results
+            }
+
+    import asyncio
+    return list(await asyncio.gather(*[_exec_one(c) for c in calls]))
 
 
 def format_observations(results: List[Dict[str, Any]]) -> str:

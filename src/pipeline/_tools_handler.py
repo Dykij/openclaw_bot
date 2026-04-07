@@ -173,11 +173,11 @@ async def _classic_execution(executor, executor_model, executor_sys, executor_pr
             )
             json_match = re.search(r"```json\n(.*?)\n```", executor_response, re.DOTALL)
             if not json_match:
-                json_match = re.search(r"{.*?}", executor_response, re.DOTALL)
+                json_match = re.search(r"\{(?:[^{}]|\{[^{}]*\})*\}", executor_response, re.DOTALL)
 
             if json_match:
                 try:
-                    exec_str = json_match.group(1) if "```" in executor_response else json_match.group(0)
+                    exec_str = json_match.group(1) if json_match.lastindex and json_match.lastindex >= 1 else json_match.group(0)
                     exec_str = exec_str.strip().replace("}\n{", "},{")
                     if exec_str.startswith("{") and exec_str.endswith("}") and "},{" in exec_str:
                         exec_str = f"[{exec_str}]"

@@ -1,6 +1,6 @@
 {
   "brigades": {
-    "OpenClaw": {
+    "OpenClaw-Core": {
       "root_path": "./",
       "permissions": {
         "can_modify_framework": true,
@@ -12,7 +12,7 @@
         "Security_Auditor": "Monitors Dmarket agents for unauthorized sandbox escapes (e.g., os.system calls outside allowed paths)."
       }
     },
-    "Dmarket": {
+    "Dmarket-Dev": {
       "root_path": "../Dmarket_bot/",
       "permissions": {
         "can_modify_framework": false,

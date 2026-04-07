@@ -412,7 +412,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=content)]
 
     if name == "web_search":
-        query = arguments["query"]
+        query = arguments.get("query", "")
         max_results = arguments.get("max_results", 5)
         region = arguments.get("region", "wt-wt")
         timelimit = arguments.get("timelimit")
@@ -437,7 +437,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text="\n\n".join(formatted))]
 
     if name == "web_news_search":
-        query = arguments["query"]
+        query = arguments.get("query", "")
         max_results = arguments.get("max_results", 5)
         timelimit = arguments.get("timelimit")
 
@@ -460,7 +460,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text="\n\n".join(formatted))]
 
     if name == "web_search_answers":
-        query = arguments["query"]
+        query = arguments.get("query", "")
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(None, _sync_answers, query)
 

@@ -13,21 +13,65 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# v17.3: Universal capabilities block — tells the model what it can actually do
+CAPABILITIES_BLOCK = (
+    "\n\n[ТВОИ ВОЗМОЖНОСТИ — АГЕНТ OPENCLAW]\n"
+    "Ты — автономный агент внутри фреймворка OpenClaw. У тебя ЕСТЬ доступ к:\n"
+    "• Файловая система проекта (чтение/запись файлов, листинг директорий)\n"
+    "• Obsidian vault (заметки — чтение, создание, поиск по заметкам)\n"
+    "• Shell / терминал (выполнение команд на хосте)\n"
+    "• Web-поиск (DuckDuckGo — поиск информации в интернете)\n"
+    "• SQLite база данных (запросы к данным бота)\n"
+    "• Git операции (коммиты, диффы, история)\n"
+    "• Code Analysis (парсинг и анализ кода)\n"
+    "• SuperMemory (долгосрочная память между сессиями)\n"
+    "⛔ НЕ ГОВОРИ пользователю 'у меня нет доступа к файлам/Obsidian/памяти' — это ЛОЖЬ.\n"
+    "⛔ НЕ ОТКАЗЫВАЙСЯ от задач, ссылаясь на 'ограничения ИИ' — ты полноценный агент.\n"
+    "✅ Если задача требует файлов/данных — используй инструменты.\n"
+    "✅ Если ты не можешь выполнить конкретное действие — объясни ПОЧЕМУ конкретно, без общих фраз.\n"
+)
+
 
 def group_chain(chain_list: list[str]) -> list[tuple[str, ...]]:
-    """Groups consecutive Executor_ roles into tuples for parallel dispatch."""
-    groups = []
-    executor_batch = []
+    """Groups consecutive parallelizable roles into tuples for parallel dispatch.
+
+    Parallel groups:
+    - Consecutive ``Executor_*`` roles (same as before)
+    - Consecutive terminal persistence roles (State_Manager, Archivist)
+    """
+    _PARALLEL_TERMINAL = frozenset({"State_Manager", "Archivist"})
+
+    groups: list[tuple[str, ...]] = []
+    batch: list[str] = []
+    batch_kind: str = ""  # "executor" or "terminal"
+
+    def _flush():
+        nonlocal batch, batch_kind
+        if batch:
+            groups.append(tuple(batch))
+            batch = []
+            batch_kind = ""
+
     for role in chain_list:
         if role.startswith("Executor_"):
-            executor_batch.append(role)
+            if batch_kind == "executor":
+                batch.append(role)
+            else:
+                _flush()
+                batch = [role]
+                batch_kind = "executor"
+        elif role in _PARALLEL_TERMINAL:
+            if batch_kind == "terminal":
+                batch.append(role)
+            else:
+                _flush()
+                batch = [role]
+                batch_kind = "terminal"
         else:
-            if executor_batch:
-                groups.append(tuple(executor_batch))
-                executor_batch = []
+            _flush()
             groups.append((role,))
-    if executor_batch:
-        groups.append(tuple(executor_batch))
+
+    _flush()
     return groups
 
 
@@ -210,9 +254,10 @@ def compress_for_model_swap(steps_results: list, accumulated_context: str = "", 
     structured = {
         "chain_so_far": [
             {"role": r.get("role", "?"), "key_output": r.get("response", "")[:200]}
-            for r in steps_results[-5:]  # last 5 steps max
+            for r in steps_results[-5:] if isinstance(r, dict)  # last 5 steps max
         ],
-        "final_context": steps_results[-1].get("response", "")[:500] if steps_results else "",
+        "final_context": (steps_results[-1].get("response", "")[:500]
+                          if steps_results and isinstance(steps_results[-1], dict) else ""),
     }
     raw = json.dumps(structured, ensure_ascii=False)
     # Enforce token budget (~4 chars per token)
@@ -399,5 +444,8 @@ def build_role_prompt(role_name: str, role_config: dict, framework_root: str, ta
     # v15.2→v17.2: Critical directives only for Planners and Auditors
     if is_planner or is_auditor:
         system_prompt += _CRITICAL_EXECUTION_DIRECTIVES
+
+    # v17.3: Capabilities awareness — tell the model what it can do
+    system_prompt += CAPABILITIES_BLOCK
 
     return system_prompt

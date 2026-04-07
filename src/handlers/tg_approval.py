@@ -67,11 +67,14 @@ async def send_approval_request(
         logger.info("HITL approval sent to Telegram", request_id=approval.request_id, chat_id=chat_id)
     except Exception:
         # Fallback without markdown
-        await bot.send_message(
-            chat_id=chat_id,
-            text=f"🛑 HITL Approval Required\n\nRequest: {approval.request_id}\nReasons: {reasons_str}\nPrompt: {approval.prompt_preview[:300]}",
-            reply_markup=keyboard,
-        )
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"🛑 HITL Approval Required\n\nRequest: {approval.request_id}\nReasons: {reasons_str}\nPrompt: {approval.prompt_preview[:300]}",
+                reply_markup=keyboard,
+            )
+        except Exception as _fb_err:
+            logger.error("HITL approval fallback also failed", error=str(_fb_err))
 
 
 async def handle_hitl_callback(gateway: Any, callback: CallbackQuery) -> None:
@@ -118,7 +121,8 @@ async def handle_hitl_callback(gateway: Any, callback: CallbackQuery) -> None:
         # Store pending edit info on gateway for reply handling
         if not hasattr(gateway, "_pending_hitl_edits"):
             gateway._pending_hitl_edits = {}
-        gateway._pending_hitl_edits[callback.from_user.id] = request_id
+        if callback.from_user:
+            gateway._pending_hitl_edits[callback.from_user.id] = request_id
     else:
         await callback.answer("⚠️ Unknown HITL action")
 

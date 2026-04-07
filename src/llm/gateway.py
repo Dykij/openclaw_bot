@@ -32,9 +32,6 @@ logger = structlog.get_logger("LLMGateway")
 _gateway_config: Dict[str, Any] = {}
 _openrouter_config: Dict[str, Any] = {}
 
-# Async lock for circuit breaker state mutations
-_state_lock = asyncio.Lock()
-
 # Lazy-init inference components (singletons — initialized once by configure())
 _smart_router = None
 _token_budget = None
@@ -63,7 +60,6 @@ from src.llm.hitl import (
 # ---------------------------------------------------------------------------
 _VISION_MODELS: list[str] = [
     "nvidia/nemotron-nano-12b-v2-vl:free",
-    "google/gemma-3-27b-it:free",
     "qwen/qwen3.6-plus:free",
 ]
 
@@ -102,18 +98,33 @@ def configure(config: Dict[str, Any]) -> None:
 
         router_cfg = config.get("system", {}).get("model_router", {})
         profiles: Dict[str, Any] = {}
+        # v17: Model speed/quality tiers for diversified free models
+        _FAST_MODELS = frozenset({
+            "stepfun/step-3.5-flash:free",
+            "nvidia/nemotron-3-nano-30b-a3b:free",
+            "liquid/lfm-2.5-1.2b-thinking:free",
+            "z-ai/glm-4.5-air:free",
+        })
+        _HIGH_QUALITY_MODELS = frozenset({
+            "qwen/qwen3.6-plus:free",
+            "qwen/qwen3-coder:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "openai/gpt-oss-120b:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+        })
         for task_type, model_name in router_cfg.items():
             # Skip non-model entries such as inline notes / comments
             if not isinstance(model_name, str) or "/" not in model_name:
                 continue
             if model_name not in profiles:
-                is_fast = "7b" in model_name.lower() or "mini" in model_name.lower()
+                is_fast = model_name in _FAST_MODELS
+                is_high = model_name in _HIGH_QUALITY_MODELS
                 profiles[model_name] = ModelProfile(
                     name=model_name,
                     vram_gb=0.0,
                     capabilities=[task_type],
                     speed_tier="fast" if is_fast else "medium",
-                    quality_tier="medium" if is_fast else "high",
+                    quality_tier="high" if is_high else "medium",
                 )
             else:
                 profiles[model_name].capabilities.append(task_type)
@@ -436,8 +447,8 @@ async def _call_openrouter(
                     if resp.status == 200:
                         data = await resp.json()
                         content = (
-                            data.get("choices", [{}])[0]
-                            .get("message", {})
+                            ((data.get("choices") or [{}])[0]
+                            .get("message") or {})
                             .get("content")
                         )
                         if content is None or not content.strip():
@@ -564,7 +575,7 @@ async def _call_openrouter_stream(
                         break
                     try:
                         data = json.loads(data_str)
-                        delta = data.get("choices", [{}])[0].get("delta", {})
+                        delta = (data.get("choices") or [{}])[0].get("delta") or {}
                         chunk = delta.get("content", "")
                         if chunk:
                             yield chunk

@@ -369,7 +369,7 @@ class CognitiveEvolutionEngine:
                 continue
 
             # Check if already discovered
-            if cluster_key in {s.name for s in (self._discovered_skills or [])}:
+            if cluster_key in self._discovered_skills:
                 continue
 
             skill = DiscoveredSkill(
@@ -392,8 +392,8 @@ class CognitiveEvolutionEngine:
                     examples=examples,
                 )
 
-        if isinstance(self._discovered_skills, list):
-            self._discovered_skills.extend(new_skills)
+        for skill in new_skills:
+            self._discovered_skills[skill.name] = skill
 
         logger.info("Skill discovery complete", new_skills=len(new_skills))
         return new_skills
@@ -475,5 +475,5 @@ class CognitiveEvolutionEngine:
                 for role, p in self._role_prompts.items()
                 if p.version > 0
             },
-            "discovered_skills": len(self._discovered_skills) if isinstance(self._discovered_skills, list) else 0,
+            "discovered_skills": len(self._discovered_skills),
         }

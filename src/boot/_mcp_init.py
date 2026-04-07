@@ -112,7 +112,7 @@ async def configure_llm_and_pipeline(gateway) -> None:
     try:
         from src.integrations.brigade_api import run_brigade_api
         brigade_task = asyncio.create_task(
-            run_brigade_api(gateway.config, port=brigade_port)
+            run_brigade_api(gateway.config, port=brigade_port, executor=gateway.pipeline)
         )
         gateway._bg_tasks.add(brigade_task)
         brigade_task.add_done_callback(gateway._bg_tasks.discard)

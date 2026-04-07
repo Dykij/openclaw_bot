@@ -56,7 +56,7 @@ class OpenClawGateway:
         self.config = json.loads(raw)
 
         # Pydantic-validated Telegram config (strips ${} wrappers, validates format)
-        _tg_raw = self.config["system"]["telegram"]
+        _tg_raw = self.config.get("system", {}).get("telegram", {})
         _tg = TelegramConfig(**_tg_raw)
         self.bot_token = _tg.bot_token
         self.admin_id = int(_tg.admin_chat_id)
@@ -83,7 +83,7 @@ class OpenClawGateway:
         # Watchdog for Config
         self._observer = Observer()
         self._observer.schedule(
-            ConfigReloader(self.reload_config),
+            ConfigReloader(self.reload_config, loop=asyncio.get_event_loop()),
             os.path.dirname(self.config_path) or ".",
             recursive=False,
         )
@@ -156,24 +156,42 @@ class OpenClawGateway:
         )
 
     async def reload_config(self):
-        try:
-            from src.auto_rollback import AutoRollback
-            rollback = AutoRollback(os.path.dirname(os.path.abspath(self.config_path)))
+        if not hasattr(self, '_reload_lock'):
+            self._reload_lock = asyncio.Lock()
+        async with self._reload_lock:
             try:
-                rollback.create_checkpoint("pre-config-reload")
-            except Exception:
-                pass
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                new_config = json.loads(os.path.expandvars(f.read()))
-            self.config = new_config
-            self.pipeline.config = new_config
-            logger.info("Configuration successfully hot-reloaded.")
-            try:
-                rollback.finalize("config-reload-success")
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error("Failed to reload config", error=str(e))
+                from src.auto_rollback import AutoRollback
+                rollback = AutoRollback(os.path.dirname(os.path.abspath(self.config_path)))
+                try:
+                    rollback.create_checkpoint("pre-config-reload")
+                except Exception:
+                    pass
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    new_config = json.loads(os.path.expandvars(f.read()))
+                self.config = new_config
+                self.pipeline.config = new_config
+                # B4-fix: update derived values that were cached at init
+                try:
+                    _tg_new = new_config.get("system", {}).get("telegram", {})
+                    if _tg_new.get("admin_chat_id"):
+                        self.admin_id = int(_tg_new["admin_chat_id"])
+                except (ValueError, KeyError):
+                    pass
+                if hasattr(self, 'tailscale') and self.tailscale:
+                    try:
+                        self.tailscale._config = new_config
+                        _ts_cfg = new_config.get("system", {}).get("tailscale", {})
+                        self.tailscale.enabled = _ts_cfg.get("enabled", True)
+                        self.tailscale.health_interval = _ts_cfg.get("health_interval_sec", 60)
+                    except Exception:
+                        pass
+                logger.info("Configuration successfully hot-reloaded.")
+                try:
+                    rollback.finalize("config-reload-success")
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error("Failed to reload config", error=str(e))
 
     async def _graceful_shutdown(self):
         """Clean up all background subsystems before exit."""
@@ -185,9 +203,9 @@ class OpenClawGateway:
         except Exception:
             pass
         # Stop scheduler
-        if hasattr(self, 'scheduler') and self.scheduler:
+        if hasattr(self, '_scheduler') and self._scheduler:
             try:
-                await self.scheduler.shutdown()
+                await self._scheduler.shutdown()
             except Exception:
                 pass
         # Cancel background tasks

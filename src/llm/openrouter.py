@@ -223,10 +223,17 @@ async def call_openrouter(
     # Proactive rate limit check before attempting any model
     await _wait_for_rate_limit()
 
+    # --- Early exit if API key is missing ---
+    if not api_key:
+        logger.error("OpenRouter API key is missing or empty", role=role_name)
+        return (
+            f"[ERROR] API-ключ OpenRouter отсутствует. "
+            f"Роль {role_name} не может выполнить запрос. "
+            "Проверьте переменную OPENROUTER_API_KEY."
+        )
+
     # --- Try each model in the fallback chain ---
     for model_idx, current_model in enumerate(models_to_try):
-        if not api_key:
-            break
 
         if await _is_circuit_open_async(current_model):
             logger.info(f"Circuit open for {current_model}, trying next fallback", role=role_name)
@@ -257,8 +264,8 @@ async def call_openrouter(
                         if resp.status == 200:
                             await record_success_async(current_model)
                             data = await resp.json()
-                            choice = data.get("choices", [{}])[0]
-                            msg = choice.get("message", {})
+                            choice = (data.get("choices") or [{}])[0]
+                            msg = choice.get("message") or {}
 
                             # Handle tool calls
                             if msg.get("tool_calls") and tools:
@@ -278,25 +285,46 @@ async def call_openrouter(
                                 ) as resp2:
                                     if resp2.status == 200:
                                         data2 = await resp2.json()
-                                        raw = data2.get("choices", [{}])[0].get("message", {}).get("content") or ""
+                                        raw = ((data2.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
                                         text = raw.strip()
                                         if not preserve_think:
                                             text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
                                             text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
                                         if not text:
-                                            raise ValueError("Empty content after tool call")
+                                            logger.warning(
+                                                "Empty content after tool call (not server failure)",
+                                                model=current_model, role=role_name,
+                                                attempt=f"{attempt + 1}/{max_retries}",
+                                            )
+                                            if attempt < max_retries - 1:
+                                                await asyncio.sleep(1)
+                                                continue
+                                            last_error = f"Empty response after tool call from {current_model}"
+                                            break
                                         if model_idx > 0:
                                             logger.info(f"OpenRouter OK for {role_name} (fallback #{model_idx})", model=current_model)
                                         else:
                                             logger.info(f"OpenRouter OK for {role_name}", model=current_model)
                                         return text
+                                    else:
+                                        _tc_err = await resp2.text()
+                                        raise ValueError(f"Tool follow-up HTTP {resp2.status}: {_tc_err[:200]}")
 
                             text = (msg.get("content") or "").strip()
                             if not preserve_think:
                                 text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
                                 text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
                             if not text:
-                                raise ValueError("OpenRouter returned empty content")
+                                logger.warning(
+                                    "OpenRouter empty content (not server failure)",
+                                    model=current_model, role=role_name,
+                                    attempt=f"{attempt + 1}/{max_retries}",
+                                )
+                                if attempt < max_retries - 1:
+                                    await asyncio.sleep(1)
+                                    continue
+                                last_error = f"Empty response from {current_model}"
+                                break
                             if model_idx > 0:
                                 logger.info(f"OpenRouter OK for {role_name} (fallback #{model_idx})", model=current_model)
                             else:
@@ -385,18 +413,15 @@ async def call_openrouter(
 
 
 async def _execute_tool_calls(tool_calls: list, mcp_client: Any) -> list:
-    """Execute MCP tool calls and return results for OpenAI-compatible message format."""
-    results = []
-    for tc in tool_calls:
+    """Execute MCP tool calls in parallel and return results for OpenAI-compatible message format."""
+
+    async def _exec_one(tc: dict) -> dict:
         fn_name = tc.get("function", {}).get("name", "")
         fn_args = tc.get("function", {}).get("arguments", "{}")
+        tc_id = tc.get("id", "")
         if not fn_name:
-            results.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": json.dumps({"error": "Missing function name"}),
-            })
-            continue
+            return {"role": "tool", "tool_call_id": tc_id,
+                    "content": json.dumps({"error": "Missing function name"})}
         if isinstance(fn_args, str):
             try:
                 fn_args = json.loads(fn_args)
@@ -404,19 +429,15 @@ async def _execute_tool_calls(tool_calls: list, mcp_client: Any) -> list:
                 fn_args = {}
         try:
             result = await mcp_client.call_tool(fn_name, fn_args)
-            results.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": json.dumps(result),
-            })
+            return {"role": "tool", "tool_call_id": tc_id,
+                    "content": json.dumps(result)}
         except Exception as e:
-            results.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": json.dumps({"error": str(e)}),
-            })
             logger.error(f"Tool {fn_name} failed: {e}")
-    return results
+            return {"role": "tool", "tool_call_id": tc_id,
+                    "content": json.dumps({"error": str(e)})}
+
+    import asyncio
+    return list(await asyncio.gather(*[_exec_one(tc) for tc in tool_calls]))
 
 
 async def check_openrouter(api_key: str, model: str = "qwen/qwen3.6-plus:free") -> Dict[str, Any]:
@@ -443,7 +464,7 @@ async def check_openrouter(api_key: str, model: str = "qwen/qwen3.6-plus:free") 
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    raw = data.get("choices", [{}])[0].get("message", {}).get("content") or ""
+                    raw = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
                     text = raw.strip()
                     return {"status": "ok", "response": text, "model": model}
                 error = await resp.text()

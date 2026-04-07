@@ -200,10 +200,12 @@ class MACConstitution:
                         tg.create_task(self._extract_llm_rules(chunk, config))
                         for chunk in chunks
                     ]
-                for i, t in enumerate(tasks):
-                    llm_texts[i] = t.result()
             except* Exception as eg:
                 logger.warning("MAC TaskGroup partial failure", errors=[str(e) for e in eg.exceptions])
+            # Harvest results from completed tasks (even on partial failure)
+            for i, t in enumerate(tasks):
+                if t.done() and not t.cancelled() and t.exception() is None:
+                    llm_texts[i] = t.result()
 
         # Собираем LLM-правила, дедупликуем
         seen_texts: set[str] = {r.text for r in heuristic_rules}

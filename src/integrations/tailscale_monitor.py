@@ -59,7 +59,7 @@ class TailscaleMonitor:
         self._last_status: Optional[TailscaleStatus] = None
 
         # Configuration from openclaw_config.json
-        ts_cfg = config.get("tailscale", {})
+        ts_cfg = config.get("system", {}).get("tailscale", {})
         self.enabled = ts_cfg.get("enabled", True)
         self.health_interval = ts_cfg.get("health_interval_sec", 60)
 

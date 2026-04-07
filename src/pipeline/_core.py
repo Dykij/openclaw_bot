@@ -37,6 +37,7 @@ from src.pipeline_schemas import (
     PipelineResult,
 )
 from src.pipeline_utils import (
+    CAPABILITIES_BLOCK,
     build_role_prompt,
     clean_response_for_user,
     compress_for_next_step,
@@ -46,7 +47,7 @@ from src.pipeline_utils import (
 )
 from src.validators.code_validator import CodeValidator
 from src.llm.gateway import route_llm
-from src.llm.openrouter import call_openrouter, reset_circuit_breakers
+from src.llm.openrouter import call_openrouter, reset_circuit_breakers_async
 from src.ai.agents.react import ReActReasoner
 from src.ai.agents.constitutional import ConstitutionalChecker
 from src.tools.dynamic_sandbox import DynamicSandbox
@@ -407,6 +408,9 @@ class PipelineExecutor:
 
     def get_chain(self, brigade: str) -> List[str]:
         brigade_config = self.config.get("brigades", {}).get(brigade, {})
+        if not brigade_config:
+            logger.warning("Brigade not found in config", brigade=brigade)
+            return self.default_chains.get(brigade, ["Planner"])
         if "pipeline" in brigade_config:
             return brigade_config["pipeline"]
         available_roles = set(brigade_config.get("roles", {}).keys())
@@ -557,7 +561,7 @@ class PipelineExecutor:
 
         # Reset per-model circuit breakers at the start of each pipeline run
         # so stale failures from previous runs don't poison fresh queries.
-        reset_circuit_breakers()
+        await reset_circuit_breakers_async()
 
         # --- v13.1: LATS tree search for complex tasks (TaskGroup + early exit) ---
         # v15.4: Skip LATS entirely when prompt contains a URL — force tool-execution chain
@@ -621,6 +625,69 @@ class PipelineExecutor:
         logger.info("Token budget estimated", max_tokens=budget.max_tokens, reason=budget.budget_reason)
 
         memory_context = await self._recall_memory_context(prompt)
+
+        # ── v17: Single-shot mode for simple tasks ──────────────────────
+        # Skip the full chain-of-agents loop and answer in a single LLM call.
+        # Saves 2-6 API round-trips for straightforward questions.
+        if (
+            complexity == "simple"
+            and chain_source == "standard"
+            and not task_type
+            and not _has_url
+        ):
+            _ss_brigade_cfg = self.config.get("brigades", {}).get(brigade, {})
+            _ss_first_role = chain[0] if chain else "Planner"
+            _ss_role_cfg = _ss_brigade_cfg.get("roles", {}).get(_ss_first_role, {})
+            _ss_model = _ss_role_cfg.get("model", "qwen/qwen3.6-plus:free")
+            _ss_sys = (
+                _ss_role_cfg.get("system_prompt", "You are a helpful assistant.")
+                + "\n\nОтвечай прямо и лаконично. Не планируй, не делегируй — просто дай ответ."
+                + CAPABILITIES_BLOCK
+            )
+            if memory_context:
+                _ss_sys += f"\n\n[Контекст из памяти]:\n{memory_context[:2000]}"
+
+            logger.info("Single-shot mode activated", brigade=brigade, model=_ss_model)
+            if status_callback:
+                await status_callback("SingleShot", _ss_model, "⚡ Быстрый ответ...")
+
+            import time as _time_mod
+            _ss_t0 = _time_mod.monotonic()
+            try:
+                _ss_mcp = self.openclaw_mcp if brigade == "OpenClaw-Core" else (self.dmarket_mcp or self.openclaw_mcp)
+                _ss_response = await self._call_llm(
+                    model=_ss_model,
+                    system_prompt=_ss_sys,
+                    user_prompt=prompt,
+                    role_name="SingleShot",
+                    role_config=_ss_role_cfg,
+                    mcp_client=_ss_mcp,
+                )
+                _ss_elapsed = int((_time_mod.monotonic() - _ss_t0) * 1000)
+
+                # Validate: no internal markup leaks (Archivist guardrail)
+                _ss_guard = ROLE_GUARDRAILS.get("Archivist")
+                _ss_valid = True
+                if _ss_guard:
+                    _ss_result = _ss_guard(_ss_response)
+                    # guardrail returns (bool, str) tuple
+                    _ss_valid = _ss_result[0] if isinstance(_ss_result, tuple) else bool(_ss_result)
+                if not _ss_valid:
+                    logger.warning("Single-shot failed Archivist guardrail, falling through to full chain")
+                else:
+                    _ss_response = clean_response_for_user(_ss_response)
+                    return {
+                        "final_response": _ss_response,
+                        "brigade": brigade,
+                        "chain_executed": ["SingleShot"],
+                        "steps": [{"role": "SingleShot", "model": _ss_model,
+                                   "response": _ss_response, "duration_ms": _ss_elapsed}],
+                        "status": "completed",
+                        "meta": {"mode": "single_shot", "complexity": "simple"},
+                    }
+            except Exception as e:
+                logger.warning("Single-shot failed, falling through to full chain", error=str(e))
+        # ── end single-shot ──────────────────────────────────────────────
 
         # v14.2: YouTube — если в промпте есть YouTube URL, извлекаем транскрипт
         _yt_metadata_only = False  # флаг: субтитры недоступны, но есть метаданные
@@ -749,12 +816,14 @@ class PipelineExecutor:
                 for role_name, res in zip(group, parallel_results):
                     if isinstance(res, Exception):
                         logger.error(f"Parallel step {role_name} failed: {res}")
-                        response = f"⚠️ {role_name} failed: {res}"
+                        response = f"[PARALLEL_ERROR] ⚠️ {role_name} failed: {res}"
                     else:
                         response = res
                     steps_results.append({"role": role_name, "model": "parallel", "response": response})
                 merged = "\n\n".join(
-                    f"[{r['role']}]: {compress_for_next_step(r['role'], r['response'])}"
+                    f"[{r['role']}]: {r['response']}"
+                    if r['response'].startswith("[PARALLEL_ERROR]")
+                    else f"[{r['role']}]: {compress_for_next_step(r['role'], r['response'])}"
                     for r in steps_results if r['role'] in group
                 )
                 context_briefing = merged
@@ -771,6 +840,7 @@ class PipelineExecutor:
                 )
                 if not role_config:
                     logger.warning(f"Role '{role_name}' not found in config, skipping")
+                    step_index += 1
                     continue
                 model = role_config.get("model", "qwen/qwen3.6-plus:free")
                 system_prompt = build_role_prompt(role_name, role_config, self._framework_root)
@@ -784,6 +854,24 @@ class PipelineExecutor:
                 system_prompt += _obsidian_logic_cache
             if _learning_log_cache:
                 system_prompt += _learning_log_cache
+
+            # v17.3: Inject available tool names for tool-eligible roles
+            # П8-fix: вычисляем active_mcp ДО использования (ранее присваивалась только внутри _vram_protection)
+            active_mcp = self.openclaw_mcp if brigade == "OpenClaw-Core" else self.dmarket_mcp
+            # C2-fix: validate MCP client is still alive
+            if active_mcp and hasattr(active_mcp, '_session') and active_mcp._session is None:
+                logger.warning("MCP client session is dead, setting active_mcp to None", brigade=brigade)
+                active_mcp = None
+            if role_name in TOOL_ELIGIBLE_ROLES and active_mcp and hasattr(active_mcp, 'available_tools_openai'):
+                _tool_names = [t.get("function", {}).get("name", "") for t in active_mcp.available_tools_openai]
+                _tool_names = [n for n in _tool_names if n]
+                if _tool_names:
+                    system_prompt += (
+                        "\n\n[ДОСТУПНЫЕ MCP ИНСТРУМЕНТЫ]\n"
+                        "Ты можешь вызывать следующие инструменты:\n"
+                        + ", ".join(_tool_names[:40]) + "\n"
+                        "Используй их через function calling когда задача требует данных или действий.\n"
+                    )
 
             # П4-fix v14.8 → усилено в v14.9: антигаллюцинационная директива для YouTube
             if _yt_transcript_injected and role_name in ("Researcher", "Analyst", "Summarizer"):
@@ -812,7 +900,7 @@ class PipelineExecutor:
                 )
 
             if shared_observations:
-                shared_str = "\n".join(f"- {k}: {v[:1000]}..." for k, v in shared_observations.items())
+                shared_str = "\n".join(f"- {k}: {str(v)[:1000]}..." for k, v in shared_observations.items())
                 step_prompt += f"\n\n[SHARED OBSERVATIONS (Parallel Subtasks)]\n{shared_str}"
 
             total_input_chars = len(system_prompt) + len(step_prompt)
@@ -838,7 +926,6 @@ class PipelineExecutor:
 
             async with self._vram_protection(model, prev_model):
                 preserve_think = any(role in role_name for role in ["Planner", "Foreman", "Orchestrator", "Auditor"])
-                active_mcp = self.openclaw_mcp if brigade == "OpenClaw-Core" else self.dmarket_mcp
                 role_schema = ROLE_SCHEMAS.get(role_name) if not task_type else None
 
                 # v13.2→v17.2: Ensemble Voting only for extreme complexity (saves 1 LLM call on complex tasks)
@@ -867,10 +954,14 @@ class PipelineExecutor:
                         auditor_role_config=_auditor_cfg,
                     )
                 else:
-                    response = await self._call_llm(
-                        model, system_prompt, step_prompt, role_name, role_config, active_mcp,
-                        preserve_think=preserve_think, json_schema=role_schema
-                    )
+                    try:
+                        response = await self._call_llm(
+                            model, system_prompt, step_prompt, role_name, role_config, active_mcp,
+                            preserve_think=preserve_think, json_schema=role_schema
+                        )
+                    except Exception as _llm_err:
+                        logger.error("_call_llm failed in pipeline step", role=role_name, error=str(_llm_err))
+                        response = f"⚠️ LLM call failed for {role_name}: {_llm_err}"
 
                 # --- v14.2: TOOL CALL TEXT INTERCEPTION ---
                 # Free models may emit raw XML/MD tool calls instead of native JSON.
@@ -898,6 +989,14 @@ class PipelineExecutor:
                                 for call, tc_res in zip(_parsed_calls, _tc_results):
                                     shared_observations[call.name] = (tc_res.get("output") or tc_res.get("error") or "")[:2000]
                             _observation = format_observations(_tc_results)
+
+                            # C5-fix: if ALL tool calls returned errors, warn in observation
+                            _all_failed = all(
+                                (r.get("error") or ("error" in str(r.get("output", "")).lower()[:50]))
+                                for r in _tc_results
+                            ) if _tc_results else False
+                            if _all_failed:
+                                _observation += "\n\n⚠️ Все вызванные инструменты вернули ошибки. Ответь пользователю без данных инструментов."
 
                             # --- v16.4: Autonomous Error Catcher + Self-Healing ---
                             try:
@@ -1026,7 +1125,7 @@ class PipelineExecutor:
                                 inference_fn=self._quick_inference,
                             )
                             if _fix_rule:
-                                _fresh = get_recent_knowledge(max_age_seconds=60)
+                                _fresh = get_recent_knowledge(max_age_seconds=60) or ""
                                 _heal_prompt = (
                                     f"{step_prompt}\n\n"
                                     f"[SELF-HEALING CONTEXT]\n{_fresh}\n\n"
@@ -1167,7 +1266,9 @@ class PipelineExecutor:
                     _step_reward = 0.7  # default for non-error steps
                     if "error" in response.lower() or "fail" in response.lower():
                         _step_reward = 0.3
-                    self._supermemory.save_step_experience(
+                    import functools
+                    _save_fn = functools.partial(
+                        self._supermemory.save_step_experience,
                         episode_id=f"run:{int(time.time())}",
                         step_index=step_index,
                         role=role_name,
@@ -1175,6 +1276,7 @@ class PipelineExecutor:
                         observation=response[:300],
                         reward=_step_reward,
                     )
+                    await asyncio.get_running_loop().run_in_executor(None, _save_fn)
                 except Exception as _slea_err:
                     logger.debug("SLEA-RL step save failed (non-fatal)", error=str(_slea_err))
             step_index += 1
@@ -1258,11 +1360,16 @@ class PipelineExecutor:
         _is_success = final_response and not final_response.startswith("⚠️")
         if _is_success and _complexity in ("complex", "extreme") and self._supermemory:
             try:
-                asyncio.ensure_future(
+                _traj_task = asyncio.ensure_future(
                     _async_save_trajectory(
                         self._supermemory, prompt, chain, _complexity,
                         steps_results, final_response,
                     )
+                )
+                _traj_task.add_done_callback(
+                    lambda t: t.exception() and logger.debug(
+                        "Trajectory save background error", error=str(t.exception())
+                    ) if not t.cancelled() and t.exception() else None
                 )
             except Exception as _trl_err:
                 logger.debug("Trajectory save failed (non-fatal)", error=str(_trl_err))
@@ -1327,6 +1434,10 @@ class PipelineExecutor:
                 )
             except Exception as _rl_err:
                 logger.debug("RL on_pipeline_complete failed (non-fatal)", error=str(_rl_err))
+
+        # Ensure final_response is never empty (would cause TelegramBadRequest)
+        if not final_response or not final_response.strip():
+            final_response = "⚠️ Пайплайн не смог сгенерировать ответ. Попробуйте переформулировать запрос."
 
         try:
             validated = PipelineResult(
@@ -1533,6 +1644,23 @@ class PipelineExecutor:
                 user_prompt = user_prompt[:max_prompt_chars] + "\n\n[... контекст сокращён для Auditor ...]"
 
         t0 = time.monotonic()
+
+        # v17.3: Collect MCP tools for tool-eligible roles
+        _tools_payload = None
+        if role_name in TOOL_ELIGIBLE_ROLES and mcp_client and hasattr(mcp_client, 'available_tools_openai'):
+            _all_tools = mcp_client.available_tools_openai
+            if _all_tools:
+                if "Planner" in role_name or "Foreman" in role_name:
+                    _readonly = {
+                        "list_directory", "read_file", "list_tables", "read_query",
+                        "describe_table", "search_memory", "web_search", "web_news_search",
+                    }
+                    _tools_payload = [t for t in _all_tools if t.get("function", {}).get("name") in _readonly]
+                else:
+                    _tools_payload = _all_tools
+                if _tools_payload:
+                    logger.debug(f"Injecting {len(_tools_payload)} MCP tools for {role_name}")
+
         if self.openrouter_enabled and or_model:
             result = await call_openrouter(
                 openrouter_config=self.openrouter_config,
@@ -1546,6 +1674,7 @@ class PipelineExecutor:
                 config=self.config,
                 preserve_think=preserve_think,
                 json_schema=json_schema,
+                tools=_tools_payload,
             )
         else:
             result = await route_llm(

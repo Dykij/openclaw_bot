@@ -37,13 +37,20 @@ def setup_structlog() -> None:
 # ---------------------------------------------------------------------------
 
 class ConfigReloader(FileSystemEventHandler):
-    def __init__(self, callback):
+    def __init__(self, callback, loop=None):
         self.callback = callback
+        self._loop = loop
 
     def on_modified(self, event):
         if event.src_path.endswith("config/openclaw_config.json"):
             structlog.get_logger("ConfigReloader").info("Config changed, reloading...")
-            self.callback()
+            import asyncio
+            import inspect
+            if inspect.iscoroutinefunction(self.callback):
+                loop = self._loop or asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(self.callback(), loop)
+            else:
+                self.callback()
 
 
 # ---------------------------------------------------------------------------

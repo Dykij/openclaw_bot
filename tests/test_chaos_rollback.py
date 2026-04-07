@@ -26,16 +26,16 @@ def test_chaos_rollback():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     target = os.path.join(repo, "src", "core", "auto_rollback.py")
 
-    # Skip if the target file has uncommitted changes — git reset --hard
-    # would restore to HEAD (committed state), not to our working-tree state,
-    # making the test non-deterministic.
+    # Skip if the working tree is dirty — create_checkpoint() will also commit
+    # unrelated changes, and git reset --hard may have side effects on Windows
+    # with file locks from running Python processes.
     import subprocess
     diff = subprocess.run(
-        ["git", "diff", "--name-only", "src/core/auto_rollback.py"],
+        ["git", "status", "--porcelain"],
         capture_output=True, text=True, cwd=repo,
     )
     if diff.stdout.strip():
-        pytest.skip("auto_rollback.py has uncommitted changes; git reset --hard would lose them")
+        pytest.skip("Working tree is dirty; destructive test requires a clean working tree")
 
     ar = AutoRollback(repo)
 

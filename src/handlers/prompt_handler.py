@@ -123,10 +123,10 @@ async def handle_prompt(gateway, message: Message):
             await message.reply("⚠️ Запрос уже истёк или был обработан.")
         return
 
-    PROMPT_COUNTER.inc()
     prompt = message.text
     if not prompt:
         return
+    PROMPT_COUNTER.inc()
     logger.info("received_prompt", prompt=prompt)
     try:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
@@ -181,27 +181,29 @@ async def _handle_teacher_commands(message: Message, prompt: str) -> bool:
 
 async def _handle_prompt_inner(gateway, message: Message, prompt: str):
     """Full pipeline execution: injection check → intent → brigade → response."""
+    brigade = "General"  # П9-fix: default to avoid UnboundLocalError on edge cases
 
     # v16.3: Teacher commands — intercept before full pipeline
     if await _handle_teacher_commands(message, prompt):
         return
 
     # Safety: Prompt Injection Detection
-    injection_result = gateway.injection_defender.analyze(prompt)
-    if injection_result.is_injection:
-        logger.warning("Prompt injection detected", severity=injection_result.severity,
-                       patterns=injection_result.patterns_matched)
-        if injection_result.severity in ("high", "critical"):
+    if hasattr(gateway, "injection_defender"):
+        injection_result = gateway.injection_defender.analyze(prompt)
+        if injection_result.is_injection:
+            logger.warning("Prompt injection detected", severity=injection_result.severity,
+                           patterns=injection_result.patterns_matched)
+            if injection_result.severity in ("high", "critical"):
+                await message.reply(
+                    f"🛡️ *Заблокировано*: обнаружена попытка prompt injection "
+                    f"(severity: {injection_result.severity})",
+                    parse_mode="Markdown",
+                )
+                return
             await message.reply(
-                f"🛡️ *Заблокировано*: обнаружена попытка prompt injection "
-                f"(severity: {injection_result.severity})",
-                parse_mode="Markdown",
+                f"⚠️ Предупреждение: подозрительный паттерн в запросе "
+                f"(confidence: {injection_result.confidence:.0%}). Обрабатываю с осторожностью.",
             )
-            return
-        await message.reply(
-            f"⚠️ Предупреждение: подозрительный паттерн в запросе "
-            f"(confidence: {injection_result.confidence:.0%}). Обрабатываю с осторожностью.",
-        )
 
     # Check if it's a reply to ask_user
     is_reply = False
@@ -209,8 +211,8 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
         if hasattr(gateway, 'pending_ask_user') and message.from_user.id in gateway.pending_ask_user:
             is_reply = True
             context = gateway.pending_ask_user.pop(message.from_user.id)
-            brigade = context["brigade"]
-            original_prompt = context["original_prompt"]
+            brigade = context.get("brigade", "General")
+            original_prompt = context.get("original_prompt", prompt)
             prompt = (
                 f"Ранее я просил: {original_prompt}\n"
                 f"Твой вопрос ко мне. Вот мой ответ/уточнение: {prompt}\n"
@@ -218,16 +220,17 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
             )
             logger.info("Resuming pipeline with user clarification", brigade=brigade)
 
-    # Session Management: Context Auto-Reset
+    # Session Management: Context Auto-Reset (per-user)
     if not hasattr(gateway, '_session_msg_count'):
-        gateway._session_msg_count = 0
-    gateway._session_msg_count += 1
+        gateway._session_msg_count = {}
+    _uid = message.from_user.id if message.from_user else 0
+    gateway._session_msg_count[_uid] = gateway._session_msg_count.get(_uid, 0) + 1
 
     reset_limit = gateway.config.get("system", {}).get(
         "session_management", {}
     ).get("auto_reset_context_messages", 50)  # v17.2: increased from 15
-    if gateway._session_msg_count >= reset_limit:
-        gateway._session_msg_count = 0
+    if gateway._session_msg_count[_uid] >= reset_limit:
+        gateway._session_msg_count[_uid] = 0
         if hasattr(gateway, 'memory_gc'):
             gateway.memory_gc._persistent_summary = ""
             gateway.memory_gc._compression_count = 0
@@ -281,11 +284,15 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
 
     route_label = f"{actual_brigade} ⚡" if is_fast_path else actual_brigade
     _b = gateway.archivist.escape_markdown(route_label)
-    status_msg = await message.reply(
-        f"🤖 *Pipeline \\({_b}\\)* запущен\\.\\.\\.\n"
-        f"_Маршрутизация задачи в бригаду\\.\\.\\._",
-        parse_mode="MarkdownV2",
-    )
+    try:
+        status_msg = await message.reply(
+            f"🤖 *Pipeline \\({_b}\\)* запущен\\.\\.\\.\n"
+            f"_Маршрутизация задачи в бригаду\\.\\.\\._",
+            parse_mode="MarkdownV2",
+        )
+    except Exception as e:
+        logger.warning("Failed to send status message", error=str(e))
+        status_msg = None
 
     await gateway.archivist.send_status(
         f"Router ({actual_brigade})", "Intent Classification",
@@ -294,6 +301,8 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
     )
 
     async def update_status(role, model, text):
+        if status_msg is None:
+            return
         try:
             b = gateway.archivist.escape_markdown(actual_brigade)
             r = gateway.archivist.escape_markdown(role)
@@ -303,10 +312,8 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
                 f"🏴 *{b}* \\| ⚙️ `{r}` \\(`{m}`\\)\n_{t}_",
                 parse_mode="MarkdownV2",
             )
-        except Exception:
-            pass
-
-    # Periodic typing indicator
+        except Exception as e:
+            logger.debug("status_msg edit failed", error=str(e))
     typing_stop = asyncio.Event()
 
     async def _keep_typing():
@@ -334,6 +341,10 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
     finally:
         typing_stop.set()
         typing_task.cancel()
+        try:
+            await typing_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # Self-Healing Logic (one-time retry on failure)
     if result.get("status") == "error":
@@ -350,6 +361,10 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
         finally:
             typing_stop.set()
             typing_task.cancel()
+            try:
+                await typing_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     # --- Send API error debug to Telegram if captured ---
     try:
@@ -357,7 +372,7 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
         api_err = get_last_api_error()
         if api_err and api_err.get("status") in (401, 402, 429, 500, 503):
             from src.boot._heartbeat import send_api_error_debug
-            tg_config = gateway.config.get("telegram", {})
+            tg_config = gateway.config.get("system", {}).get("telegram", {})
             await send_api_error_debug(
                 token=tg_config.get("token", ""),
                 admin_id=gateway.admin_id,
@@ -399,16 +414,17 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
     # v15.3: Strip <think>...</think> LATS reasoning traces before showing to user
     llm_response = re.sub(r"<think>[\s\S]*?</think>\s*", "", llm_response).strip()
 
-    chain_str = " → ".join(result["chain_executed"])
+    chain_str = " → ".join(result.get("chain_executed", []))
     display_brigade = f"{actual_brigade} ⚡" if is_fast_path else actual_brigade
     _pipeline_elapsed = time.time() - _pipeline_start
 
     # Safety: Hallucination Detection on output
-    hall_result = gateway.hallucination_detector.detect(llm_response, prompt)
-    if hall_result.overall_risk == "high":
-        llm_response += "\n\n⚠️ _Внимание: обнаружен высокий риск галлюцинации. Проверьте факты._"
-        logger.warning("Hallucination risk HIGH", flags=hall_result.flags,
-                       suspicious=hall_result.suspicious_claims[:3])
+    if hasattr(gateway, 'hallucination_detector') and gateway.hallucination_detector:
+        hall_result = gateway.hallucination_detector.detect(llm_response, prompt)
+        if hall_result.overall_risk == "high":
+            llm_response += "\n\n⚠️ _Внимание: обнаружен высокий риск галлюцинации. Проверьте факты._"
+            logger.warning("Hallucination risk HIGH", flags=hall_result.flags,
+                           suspicious=hall_result.suspicious_claims[:3])
 
     # Safety: Output Content Filter (PII, credentials, harmful content)
     if hasattr(gateway, "output_filter"):
@@ -431,6 +447,8 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
     _hist.append((_original_user_msg, llm_response[:_MAX_TURN_CHARS]))
 
     # Record pipeline history
+    if not hasattr(gateway, '_pipeline_history'):
+        gateway._pipeline_history = []
     gateway._pipeline_history.append({
         "timestamp": time.strftime("%H:%M:%S"),
         "brigade": actual_brigade,
@@ -438,12 +456,13 @@ async def _handle_prompt_inner(gateway, message: Message, prompt: str):
         "chain": chain_str,
         "duration_sec": _pipeline_elapsed,
         "status": result.get("status", "completed"),
-        "hallucination_risk": hall_result.overall_risk,
     })
     if len(gateway._pipeline_history) > 50:
         gateway._pipeline_history = gateway._pipeline_history[-50:]
 
     # Record perf metrics
+    if not hasattr(gateway, '_perf_metrics'):
+        gateway._perf_metrics = []
     for step in result.get("steps", []):
         resp_len = len(step.get("response", ""))
         est_tokens = resp_len // 4
@@ -492,7 +511,7 @@ def smart_split(text: str, limit: int = 4000) -> list[str]:
         chunk = text[:limit]
         fence_pos = chunk.rfind("\n```\n")
         if fence_pos > limit // 3:
-            split_at = fence_pos + 4  # after ```\n
+            split_at = fence_pos + 5  # len("\n```\n") == 5
         else:
             # Try double-newline (paragraph)
             split_at = chunk.rfind("\n\n")
@@ -523,6 +542,17 @@ async def _send_response(gateway, message, status_msg, result, llm_response,
     Long messages are automatically split into chunks to avoid
     Telegram's MESSAGE_TOO_LONG (4096 char limit).
     """
+    # Guard: if status_msg creation failed, send via message.reply as fallback
+    if status_msg is None:
+        final_text = llm_response + meta_footer
+        chunks = smart_split(final_text)
+        for chunk in chunks:
+            try:
+                await message.reply(chunk, parse_mode="HTML")
+            except Exception:
+                await message.reply(chunk)
+        return
+
     stream = result.get("stream")
     if stream:
         accumulated = ""
@@ -543,6 +573,10 @@ async def _send_response(gateway, message, status_msg, result, llm_response,
                     last_edit_time = now
         except Exception as e:
             logger.warning("Stream interrupted", error=str(e))
+            if len(accumulated.strip()) < len(llm_response) // 2:
+                logger.info("Stream fallback: using full llm_response",
+                            accumulated_len=len(accumulated), full_len=len(llm_response))
+                accumulated = llm_response
 
         final_text = accumulated + meta_footer
     else:

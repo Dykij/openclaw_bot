@@ -159,7 +159,10 @@ class ObsidianBridge:
         title = title_match.group(1) if title_match else Path(relative_path).stem
 
         fpath = self.vault_path / relative_path
-        modified = fpath.stat().st_mtime if fpath.exists() else 0.0
+        try:
+            modified = fpath.stat().st_mtime
+        except (FileNotFoundError, OSError):
+            modified = 0.0
 
         return VaultNote(
             path=relative_path,

@@ -80,11 +80,16 @@ class StatusResponse(BaseModel):
 _start_time = time.monotonic()
 
 
-def create_brigade_app(config: dict[str, Any]) -> FastAPI:
-    """Create the FastAPI application with the given config and executor."""
-    from src.pipeline._core import PipelineExecutor
+def create_brigade_app(config: dict[str, Any], executor=None) -> FastAPI:
+    """Create the FastAPI application with the given config and executor.
 
-    executor = PipelineExecutor(config)
+    If *executor* is provided (e.g. the gateway's PipelineExecutor with
+    RL/Evolution already wired), it is reused.  Otherwise a fresh one is
+    created (standalone / dev mode).
+    """
+    if executor is None:
+        from src.pipeline._core import PipelineExecutor
+        executor = PipelineExecutor(config)
 
     app = FastAPI(
         title="OpenClaw Brigade API",
@@ -249,9 +254,9 @@ def create_brigade_app(config: dict[str, Any]) -> FastAPI:
 # ---------------------------------------------------------------------------
 # Standalone runner (for development/testing)
 # ---------------------------------------------------------------------------
-async def run_brigade_api(config: dict[str, Any], *, port: int = 8765) -> None:
+async def run_brigade_api(config: dict[str, Any], *, port: int = 8765, executor=None) -> None:
     """Start the Brigade API server as an asyncio task."""
-    app = create_brigade_app(config)
+    app = create_brigade_app(config, executor=executor)
     cfg = uvicorn.Config(
         app,
         host="127.0.0.1",
