@@ -24,8 +24,20 @@ from src.core.auto_rollback import AutoRollback
 @pytest.mark.destructive
 def test_chaos_rollback():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    ar = AutoRollback(repo)
     target = os.path.join(repo, "src", "core", "auto_rollback.py")
+
+    # Skip if the target file has uncommitted changes — git reset --hard
+    # would restore to HEAD (committed state), not to our working-tree state,
+    # making the test non-deterministic.
+    import subprocess
+    diff = subprocess.run(
+        ["git", "diff", "--name-only", "src/core/auto_rollback.py"],
+        capture_output=True, text=True, cwd=repo,
+    )
+    if diff.stdout.strip():
+        pytest.skip("auto_rollback.py has uncommitted changes; git reset --hard would lose them")
+
+    ar = AutoRollback(repo)
 
     # Save original contents for guaranteed restore
     with open(target, "r", encoding="utf-8") as f:
